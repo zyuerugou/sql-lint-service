@@ -1,10 +1,9 @@
+import importlib
 import logging
 import os
-import importlib
-import sys
 import threading
 import time
-from datetime import datetime
+
 from sqlfluff.core import Linter
 from sqlfluff.core.config import FluffConfig
 
