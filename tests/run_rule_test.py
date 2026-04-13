@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 """
 按规则运行测试 - 支持运行单个规则的测试
 """

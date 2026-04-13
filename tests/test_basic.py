@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 """
 基础功能测试 - 快速验证服务基本功能
 """

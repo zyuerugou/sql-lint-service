@@ -1,3 +1,4 @@
+# coding=utf-8
 from sqlfluff.core.plugin import hookimpl
 
 @hookimpl

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 """
 简单测试热加载功能
 """
@@ -10,7 +11,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
 
 def test_simple():
-    """简单测试"""
+    """简单测试，返回是否通过"""
+    passed = True
     from app.services.lint_service import LintService
     
     print("创建LintService实例（启用热加载）...")
@@ -36,14 +38,15 @@ def test_simple():
     
     # 创建新规则
     print("\n创建新规则文件...")
-    new_rule = '''from sqlfluff.core.rules import BaseRule, LintResult, RuleContext
+    new_rule = '''# coding=utf-8
+from sqlfluff.core.rules import BaseRule, LintResult, RuleContext
 from sqlfluff.core.rules.crawlers import SegmentSeekerCrawler
 
-class Rule_TEST(BaseRule):
+class Rule_TE02(BaseRule):
     """测试规则"""
     
-    groups = ("all",)
-    code = "TEST"
+    groups = ("all", "customer")
+    code = "TE02"
     description = "测试规则"
     crawl_behaviour = SegmentSeekerCrawler({"select_statement"})
     
@@ -54,7 +57,7 @@ class Rule_TEST(BaseRule):
         )
 '''
     
-    rule_path = os.path.join("..", "app", "rules", "rule_test.py")
+    rule_path = os.path.join("..", "app", "rules", "rule_te02.py")
     with open(rule_path, 'w', encoding='utf-8') as f:
         f.write(new_rule)
     
@@ -68,10 +71,11 @@ class Rule_TEST(BaseRule):
     new_rules = service.get_loaded_rules()
     print(f"重新加载后的规则: {new_rules}")
     
-    if "TEST" in new_rules:
-        print("[PASS] 新规则TEST已加载")
+    if "TE02" in new_rules:
+        print("[PASS] 新规则TE02已加载")
     else:
-        print("[FAIL] 新规则TEST未加载")
+        print("[FAIL] 新规则TE02未加载")
+        passed = False
     
     # 清理
     if os.path.exists(rule_path):
@@ -83,10 +87,14 @@ class Rule_TEST(BaseRule):
     final_rules = service.get_loaded_rules()
     print(f"最终规则: {final_rules}")
     
-    if "TEST" not in final_rules:
-        print("[PASS] 规则TEST已成功移除")
+    if "TE02" not in final_rules:
+        print("[PASS] 规则TE02已成功移除")
     else:
-        print("[FAIL] 规则TEST仍然存在")
+        print("[FAIL] 规则TE02仍然存在")
+        passed = False
+    
+    return passed
 
 if __name__ == "__main__":
-    test_simple()
+    success = test_simple()
+    sys.exit(0 if success else 1)

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 """
 SS03规则测试 - 表名和字段名应当为小写（双引号内的内容除外）
 """

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 """
 SS02规则测试 - SQL关键字必须大写
 """

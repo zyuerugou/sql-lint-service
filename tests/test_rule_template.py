@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 """
 规则测试模板 - 用于创建新的规则测试文件
 

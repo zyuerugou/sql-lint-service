@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 """
 SS01规则测试 - 禁止使用 SELECT *
 """

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 """
 规则集成测试 - 测试多个规则的交互
 """
