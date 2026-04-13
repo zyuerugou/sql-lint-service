@@ -75,6 +75,14 @@ def main():
             "description": "SS02规则测试（SQL关键字必须大写）"
         },
         {
+            "file": "test_set_statements.py",
+            "description": "SET语句过滤测试（SS02/SS03规则不检查SET配置）"
+        },
+        {
+            "file": "test_multiple_statements.py",
+            "description": "多语句SQL测试（分号分隔的一次性传入效果）"
+        },
+        {
             "file": "test_rules_integration.py",
             "description": "规则集成测试"
         },

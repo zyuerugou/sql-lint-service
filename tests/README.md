@@ -49,6 +49,10 @@ python test_api.py
 # 按规则运行测试
 python run_rule_test.py SS01          # 运行SS01规则测试
 python run_rule_test.py SS02          # 运行SS02规则测试
+python run_rule_test.py SS03          # 运行SS03规则测试
+# 特殊功能测试需要单独运行
+python test_set_statements.py         # 运行SET语句过滤测试
+python test_multiple_statements.py    # 运行多语句SQL测试
 python run_rule_test.py --all         # 运行所有规则测试
 python run_rule_test.py --list        # 列出所有可用的规则测试
 ```
@@ -90,6 +94,16 @@ export BASE_URL=http://localhost:5000
 ### 1. 规则功能测试
 - **test_rule_ss01.py** - 测试SS01规则：禁止使用 `SELECT *`
 - **test_rule_ss02.py** - 测试SS02规则：SQL关键字必须大写
+- **test_set_statements.py** - 测试SET语句过滤功能，验证SS02/SS03规则不检查SET配置语句
+  - 测试SET配置语句（如 `set hive.exec.dynamic.partition=true;`）不被SS02规则检查
+  - 测试SET配置语句不被SS03规则检查
+  - 测试混合SET语句和查询语句的正确过滤
+  - 验证UPDATE语句中的SET子句仍然会被检查
+- **test_multiple_statements.py** - 测试多语句SQL（分号分隔）一次性传入的效果
+  - 测试多个SQL语句一次性传入的lint效果
+  - 测试行号保持功能（特别是SET语句过滤后）
+  - 测试边界情况（空语句、只有注释、没有分号等）
+  - 验证复杂场景下的正确性
 - **test_rules_functionality.py** - 综合规则功能测试，验证规则触发的准确性
 - **test_rules_integration.py** - 规则集成测试，测试多个规则的交互
 
@@ -196,6 +210,7 @@ export BASE_URL=http://localhost:5000
 当前测试覆盖：
 - [x] 基础lint功能
 - [x] 自定义规则功能
+- [x] SET语句过滤功能
 - [x] 热加载功能
 - [x] REST API功能
 - [x] 性能测试
