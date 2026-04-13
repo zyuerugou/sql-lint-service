@@ -2,172 +2,25 @@
 import importlib
 import logging
 import os
+import re
 import threading
-import time
-from typing import List, Optional
+from typing import Optional
 
 from sqlfluff.core import Linter
 from sqlfluff.core.config import FluffConfig
 
-# 尝试导入watchdog，如果不可用则回退到轮询模式
+# 导入事件处理器
 try:
     from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler, FileSystemEvent
     WATCHDOG_AVAILABLE = True
 except ImportError:
     WATCHDOG_AVAILABLE = False
-    # 创建虚拟类以便代码可以编译
-    class FileSystemEventHandler:
-        pass
-    class FileSystemEvent:
-        pass
     Observer = None
 
+# 导入本地事件处理器
+from app.services.event_handlers import RuleFileEventHandler, PollingFileMonitor
+
 logger = logging.getLogger(__name__)
-
-
-class RuleFileEventHandler(FileSystemEventHandler):
-    """规则文件事件处理器"""
-    
-    def __init__(self, service, debounce_seconds: float = 0.5):
-        self.service = service
-        self.debounce_seconds = debounce_seconds
-        self.last_reload_time = 0
-        self.pending_changes = set()
-        self.lock = threading.Lock()
-        
-    def on_modified(self, event: FileSystemEvent):
-        """文件修改事件处理"""
-        if not event.is_directory and event.src_path.endswith('.py'):
-            filename = os.path.basename(event.src_path)
-            if not filename.startswith('_') and not filename.endswith('.disabled'):
-                with self.lock:
-                    self.pending_changes.add(filename)
-                    current_time = time.time()
-                    
-                    # 防抖处理：避免短时间内多次触发
-                    if current_time - self.last_reload_time >= self.debounce_seconds:
-                        self._schedule_reload()
-    
-    def on_created(self, event: FileSystemEvent):
-        """文件创建事件处理"""
-        if not event.is_directory and event.src_path.endswith('.py'):
-            filename = os.path.basename(event.src_path)
-            if not filename.startswith('_') and not filename.endswith('.disabled'):
-                with self.lock:
-                    self.pending_changes.add(filename)
-                    current_time = time.time()
-                    
-                    if current_time - self.last_reload_time >= self.debounce_seconds:
-                        self._schedule_reload()
-    
-    def on_deleted(self, event: FileSystemEvent):
-        """文件删除事件处理"""
-        if not event.is_directory and event.src_path.endswith('.py'):
-            filename = os.path.basename(event.src_path)
-            if not filename.startswith('_') and not filename.endswith('.disabled'):
-                with self.lock:
-                    self.pending_changes.add(filename)
-                    current_time = time.time()
-                    
-                    if current_time - self.last_reload_time >= self.debounce_seconds:
-                        self._schedule_reload()
-    
-    def _schedule_reload(self):
-        """调度规则重新加载"""
-        if self.pending_changes:
-            changed_files = list(self.pending_changes)
-            self.pending_changes.clear()
-            self.last_reload_time = time.time()
-            
-            # 在单独的线程中执行重新加载，避免阻塞事件处理
-            reload_thread = threading.Thread(
-                target=self._execute_reload,
-                args=(changed_files,),
-                daemon=True
-            )
-            reload_thread.start()
-    
-    def _execute_reload(self, changed_files: List[str]):
-        """执行规则重新加载"""
-        try:
-            logger.info(f"检测到文件变化，触发重新加载: {changed_files}")
-            self.service.reload_rules()
-        except Exception as e:
-            logger.error(f"规则重新加载失败: {e}")
-
-
-class PollingFileMonitor:
-    """轮询模式文件监控器（watchdog不可用时的备选方案）"""
-    
-    def __init__(self, service, poll_interval: float = 2.0):
-        self.service = service
-        self.poll_interval = poll_interval
-        self.file_mod_times = {}
-        self.running = False
-        self.monitor_thread: Optional[threading.Thread] = None
-        
-    def start(self):
-        """启动轮询监控"""
-        if self.running:
-            return
-            
-        self.running = True
-        self._update_file_mod_times()
-        
-        def monitor_loop():
-            while self.running:
-                try:
-                    changed_files = self._check_files_changed()
-                    if changed_files:
-                        logger.info(f"检测到文件变化: {changed_files}")
-                        self.service.reload_rules()
-                    time.sleep(self.poll_interval)
-                except Exception as e:
-                    logger.error(f"文件监控错误: {e}")
-                    time.sleep(5)
-        
-        self.monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
-        self.monitor_thread.start()
-        logger.info(f"轮询模式文件监控已启动（间隔: {self.poll_interval}秒）")
-    
-    def stop(self):
-        """停止轮询监控"""
-        self.running = False
-        if self.monitor_thread:
-            self.monitor_thread.join(timeout=2.0)
-    
-    def _update_file_mod_times(self):
-        """更新文件修改时间缓存"""
-        rules_dir = self.service.rules_dir
-        for filename in os.listdir(rules_dir):
-            if filename.endswith('.py') and not filename.startswith('_'):
-                filepath = os.path.join(rules_dir, filename)
-                try:
-                    mod_time = os.path.getmtime(filepath)
-                    self.file_mod_times[filename] = mod_time
-                except OSError:
-                    pass
-    
-    def _check_files_changed(self):
-        """检查文件是否发生变化"""
-        changed_files = []
-        rules_dir = self.service.rules_dir
-        
-        for filename in os.listdir(rules_dir):
-            if filename.endswith('.py') and not filename.startswith('_'):
-                filepath = os.path.join(rules_dir, filename)
-                try:
-                    current_mod_time = os.path.getmtime(filepath)
-                    old_mod_time = self.file_mod_times.get(filename)
-                    
-                    if old_mod_time is None or current_mod_time > old_mod_time:
-                        changed_files.append(filename)
-                        self.file_mod_times[filename] = current_mod_time
-                except OSError:
-                    pass
-        
-        return changed_files
 
 
 class LintService:
@@ -321,8 +174,72 @@ class LintService:
     def lint_sql(self, sql: str) -> list:
         """执行SQL lint，返回格式化结果"""
         with self.reload_lock:
-            result = self.linter.lint_string(sql)
+            # 预处理：过滤掉SQLFluff无法解析的Hive SET语句
+            processed_sql = self._preprocess_sql(sql)
+            result = self.linter.lint_string(processed_sql)
             return self._format_result(result)
+    
+    def _preprocess_sql(self, sql: str) -> str:
+        """
+        预处理SQL：
+        1. 过滤掉SQLFluff无法解析的Hive SET语句
+        2. 过滤掉所有SET配置语句（避免规则误判）
+        
+        这些语句会被替换为空行，保留原始行号
+        因为它们会导致解析错误或规则误判，且不影响业务逻辑
+        """
+        if not sql:
+            return sql
+        
+        lines = sql.split('\n')
+        processed_lines = []
+        
+        # 需要完全过滤的语句模式
+        filter_patterns = [
+            # 1. SQLFluff无法解析的Hive SET语句（避免PRS错误）
+            r'^\s*set\s+hive\.exec\.dynamic\.partition\.mode\s*=',
+            r'^\s*set\s+tez\.queue\.name\s*=',
+            r'^\s*set\s+hive\.exec\.parallel\s*=',
+            r'^\s*set\s+hive\.exec\.parallel\.thread\.number\s*=',
+            r'^\s*set\s+hive\.vectorized\.execution\.enabled\s*=',
+            r'^\s*set\s+hive\.vectorized\.execution\.reduce\.enabled\s*=',
+            r'^\s*set\s+hive\.cbo\.enable\s*=',
+            r'^\s*set\s+hive\.compute\.query\.using\.stats\s*=',
+            r'^\s*set\s+hive\.stats\.fetch\.column\.stats\s*=',
+            r'^\s*set\s+hive\.stats\.fetch\.partition\.stats\s*=',
+            
+            # 包含特定值的SET语句
+            r'^\s*set\s+.*=.*nonstrict',
+            r'^\s*set\s+.*=.*default',
+            r'^\s*set\s+.*=.*none',
+            
+            # 其他已知有问题的模式
+            r'^\s*set\s+.*\.mode\s*=',
+            r'^\s*set\s+.*\.name\s*=',
+            r'^\s*set\s+.*\.enabled\s*=',
+            
+            # 2. 所有SET配置语句（避免SS02/SS03规则误判）
+            # 匹配所有SET语句，但排除UPDATE语句中的SET子句
+            r'^\s*set\s+[a-zA-Z0-9_.:$]+\s*=',
+        ]
+        
+        for line in lines:
+            should_filter = False
+            
+            # 检查是否匹配需要过滤的模式
+            for pattern in filter_patterns:
+                if re.search(pattern, line, re.IGNORECASE):
+                    should_filter = True
+                    logger.debug(f"过滤语句: {line.strip()}")
+                    break
+            
+            if should_filter:
+                # 保留空行以维持行号
+                processed_lines.append("")
+            else:
+                processed_lines.append(line)
+        
+        return '\n'.join(processed_lines)
     
     def get_loaded_rules(self):
         """获取当前加载的规则列表"""
