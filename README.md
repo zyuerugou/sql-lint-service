@@ -8,12 +8,15 @@
 - SQL语法检查和格式化
 - 自定义linting规则
 - REST API接口
+- **多语句SQL支持**：支持分号分隔的多个SQL语句一次性检查
+- **SET语句过滤**：自动过滤Hive SET配置语句，避免规则误判
 
 ### 高级功能
 - **规则热加载**：无需重启服务即可动态添加、修改、删除规则
-- **文件监控**：自动检测规则文件变化并重新加载
+- **文件监控**：使用watchdog自动检测规则文件变化并重新加载
 - **线程安全**：确保lint操作和重新加载操作的安全性
 - **完整API**：提供规则管理和lint操作的完整REST API
+- **代码组织优化**：模块化设计，服务类与事件处理器分离
 
 ## 快速开始
 
@@ -48,14 +51,18 @@ sql-lint-service/
 ├── app/                          # 应用代码
 │   ├── main.py                   # FastAPI应用入口
 │   ├── services/
-│   │   └── lint_service.py       # Lint服务核心逻辑
+│   │   ├── lint_service.py       # Lint服务核心逻辑
+│   │   └── event_handlers.py     # 文件监控事件处理器
 │   └── rules/                    # 自定义规则目录
 │       ├── __init__.py           # 规则插件入口
 │       ├── rule_ss01.py          # 规则1：禁止SELECT *
-│       └── rule_ss02.py          # 规则2：禁止全大写关键字
+│       ├── rule_ss02.py          # 规则2：SQL关键字必须大写
+│       └── rule_ss03.py          # 规则3：标识符必须小写
 ├── tests/                        # 测试套件
 │   ├── run_all_tests.py          # 测试运行器
-│   ├── test.py                   # 基础功能测试
+│   ├── test_set_statements.py    # SET语句过滤测试
+│   ├── test_multiple_statements.py # 多语句SQL测试
+│   ├── test_rules_integration.py # 规则集成测试
 │   ├── test_rules_functionality.py # 规则功能测试
 │   ├── test_simple.py            # 简单热加载测试
 │   ├── test_hot_reload.py        # 完整热加载测试
@@ -120,16 +127,45 @@ GET /rules
 POST /rules/reload
 ```
 
-#### 4. 创建新规则文件
-```
-POST /rules/create
-```
-
-请求体：
+响应示例：
 ```json
 {
-  "filename": "rule_ss03.py",
-  "content": "规则文件内容..."
+  "status": "success",
+  "message": "规则重新加载成功"
+}
+```
+
+#### 4. 健康检查
+```
+GET /health
+```
+
+响应示例：
+```json
+{
+  "status": "healthy",
+  "service": "sql-lint-service",
+  "rules_loaded": 3,
+  "hot_reload_enabled": true,
+  "timestamp": "2024-01-01T12:00:00"
+}
+```
+
+#### 5. 监控状态
+```
+GET /monitor/status
+```
+
+响应示例：
+```json
+{
+  "status": "success",
+  "monitor": {
+    "hot_reload_enabled": true,
+    "watchdog_available": true,
+    "rules_dir": "/path/to/rules",
+    "debounce_seconds": 0.5
+  }
 }
 ```
 
@@ -211,8 +247,38 @@ python run_all_tests.py
 - **规则测试**：测试所有自定义规则的行为
 - **热加载测试**：测试规则动态加载功能
 - **API测试**：测试所有REST API端点
+- **SET语句测试**：验证SET配置语句过滤功能
+- **多语句测试**：验证多个SQL语句一次性检查功能
+- **规则集成测试**：验证规则优先级和集成功能
 
 详细测试文档见 [tests/README.md](tests/README.md)
+
+## 新特性说明
+
+### 1. SET语句自动过滤
+服务会自动过滤Hive SET配置语句（如 `set hive.exec.dynamic.partition=true;`），这些语句：
+- 不会触发SS02（关键字大写）规则
+- 不会触发SS03（标识符小写）规则  
+- 被替换为空行以保持原始行号
+- 避免SQLFluff解析错误
+
+### 2. 多语句SQL支持
+支持一次性检查多个分号分隔的SQL语句：
+```sql
+SELECT * FROM users;
+INSERT INTO logs VALUES (1, 'test');
+UPDATE config SET value = 'new' WHERE id = 1;
+```
+
+### 3. 代码架构优化
+- **模块分离**：将`RuleFileEventHandler`和`PollingFileMonitor`类拆分到`event_handlers.py`
+- **简化配置**：移除从pyproject.toml读取配置的逻辑，使用硬编码最小配置
+- **类型安全**：修复PyCharm/Idea类型检查问题，简化导入逻辑
+
+### 4. 监控优化
+- **移除轮询模式**：只使用watchdog进行文件监控（必需依赖）
+- **错误处理**：增强事件处理器中的路径类型转换
+- **性能优化**：简化配置初始化过程
 
 ## 内置规则
 
@@ -229,6 +295,14 @@ python run_all_tests.py
 - **描述**：SQL关键字必须使用大写形式
 - **触发条件**：SQL关键字不是全大写（如 `select`, `from`, `where`）
 - **修复建议**：使用大写关键字（如 `SELECT`, `FROM`, `WHERE`）
+- **特殊处理**：自动排除SET配置语句中的关键字
+
+### SS03：标识符必须小写
+- **规则组**：`customer`
+- **描述**：数据库表名、列名等标识符必须使用小写形式
+- **触发条件**：标识符包含大写字母
+- **修复建议**：使用小写标识符
+- **特殊处理**：自动排除SET配置语句中的标识符
 
 ## 配置
 
@@ -238,13 +312,13 @@ python run_all_tests.py
 | `ENABLE_HOT_RELOAD` | `true` | 是否启用热加载 |
 
 ### SQLFluff配置
-服务已配置为只启用自定义规则（customer规则组），关闭所有SQLFluff默认规则。
+服务已配置为只启用自定义规则（customer规则组），使用Hive SQL方言，关闭所有SQLFluff默认规则。
 
 在代码中的配置（`app/services/lint_service.py`）：
 ```python
 self.config = FluffConfig(
     overrides = {
-        "dialect": "ansi",
+        "dialect": "hive",    # 使用Hive SQL方言
         "rules": "customer",  # 只启用customer规则组
     }
 )
@@ -302,11 +376,22 @@ CMD ["poetry", "run", "python", "app/main.py"]
 - 检查 `ENABLE_HOT_RELOAD` 环境变量
 - 检查文件权限
 - 查看监控线程是否正常启动
+- 确认watchdog依赖已正确安装
 
 #### 3. API调用失败
 - 检查服务是否运行
 - 检查端口是否正确
 - 查看请求格式是否符合要求
+
+#### 4. SET语句被误判
+- 确认SET语句格式正确（如 `set hive.exec.dynamic.partition=true;`）
+- 检查预处理逻辑是否正常工作
+- 查看服务日志了解过滤详情
+
+#### 5. 多语句SQL处理异常
+- 确认SQL语句以分号正确分隔
+- 检查行号保持功能是否正常
+- 验证每个语句的lint结果是否正确
 
 ### 日志查看
 ```bash
@@ -318,6 +403,36 @@ python main.py 2>&1 | tee service.log
 export LOG_LEVEL=DEBUG
 cd app
 python main.py
+```
+
+## 使用示例
+
+### 1. 检查包含SET语句的SQL
+```sql
+-- SET配置语句会被自动过滤
+set hive.exec.dynamic.partition=true;
+set hive.exec.dynamic.partition.mode=nonstrict;
+
+-- 实际查询语句会被检查
+SELECT user_id, user_name FROM users WHERE status = 'active';
+```
+
+### 2. 检查多个SQL语句
+```sql
+-- 一次性检查多个语句
+CREATE TABLE users (id INT, name STRING);
+INSERT INTO users VALUES (1, 'Alice');
+SELECT * FROM users WHERE id = 1;
+```
+
+### 3. 混合场景
+```sql
+-- SET语句 + 多个查询
+set tez.queue.name=default;
+SELECT COUNT(*) FROM logs WHERE date = '2024-01-01';
+
+set hive.vectorized.execution.enabled=true;
+INSERT INTO results SELECT * FROM temp_table;
 ```
 
 ## 贡献指南
@@ -332,6 +447,7 @@ python main.py
 - 所有新功能必须包含测试
 - 遵循现有代码风格
 - 更新相关文档
+- 处理类型检查问题（PyCharm/Idea兼容性）
 
 ## 许可证
 
