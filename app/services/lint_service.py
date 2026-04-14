@@ -4,21 +4,14 @@ import logging
 import os
 import re
 import threading
-from typing import Optional
+from pathlib import Path
 
 from sqlfluff.core import Linter
 from sqlfluff.core.config import FluffConfig
-
-# 导入事件处理器
-try:
-    from watchdog.observers import Observer
-    WATCHDOG_AVAILABLE = True
-except ImportError:
-    WATCHDOG_AVAILABLE = False
-    Observer = None
+from watchdog.observers import Observer as WatchdogObserver
 
 # 导入本地事件处理器
-from app.services.event_handlers import RuleFileEventHandler, PollingFileMonitor
+from app.services.event_handlers import RuleFileEventHandler
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +19,7 @@ logger = logging.getLogger(__name__)
 class LintService:
     def __init__(self, enable_hot_reload=False, hot_reload_debounce: float = 0.5):
         # 规则目录路径
-        self.rules_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'rules'))
+        self.rules_dir = str(Path(__file__).parent.parent / "rules")
         
         # 热加载相关
         self.reload_lock = threading.Lock()  # 重新加载锁
@@ -34,50 +27,19 @@ class LintService:
         self.hot_reload_debounce = hot_reload_debounce
         
         # 文件监控器
-        self.file_monitor: Optional[Observer] = None
-        self.polling_monitor: Optional[PollingFileMonitor] = None
+        self.file_monitor = None
         
         # 1. 初始加载规则
         self.custom_rules = self.load_rules_from_files()
 
         # 2. 初始化SQLFluff配置
-        # 从pyproject.toml读取配置
-        import tomllib
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        config_path = os.path.join(project_root, 'pyproject.toml')
-        
-        # 默认配置
-        config_dict = {
-            "core": {
+        # 使用最简单的配置，仅设置dialect和rules
+        self.config = FluffConfig(
+            overrides={
                 "dialect": "hive",
-                "templater": "jinja",
-                "rules": "customer",  # 默认只启用customer规则组
-                "exclude_rules": "LT01,LT02",
-            },
-            "indentation": {
-                "tab_space_size": 4,
-                "indented_joins": True
+                "rules": "customer"
             }
-        }
-        
-        # 如果存在pyproject.toml，读取配置
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, 'rb') as f:
-                    data = tomllib.load(f)
-                    sqlfluff_config = data.get('tool', {}).get('sqlfluff', {})
-                    
-                    # 更新配置
-                    for key, value in sqlfluff_config.items():
-                        if key == 'indentation':
-                            config_dict['indentation'].update(value)
-                        elif key in ['dialect', 'templater', 'exclude_rules']:
-                            config_dict['core'][key] = value
-                        # 注意：我们不从pyproject.toml读取rules，因为我们要强制使用customer规则组
-            except Exception as e:
-                logger.warning(f"读取pyproject.toml失败: {e}")
-        
-        self.config = FluffConfig(config_dict)
+        )
         
         # 3. 初始化Linter并传入自定义规则
         self.linter = Linter(config=self.config, user_rules=self.custom_rules)
@@ -88,10 +50,7 @@ class LintService:
     
     def _start_file_monitor(self):
         """启动文件监控"""
-        if WATCHDOG_AVAILABLE:
-            self._start_watchdog_monitor()
-        else:
-            self._start_polling_monitor()
+        self._start_watchdog_monitor()
     
     def _start_watchdog_monitor(self):
         """使用watchdog启动文件监控"""
@@ -101,7 +60,7 @@ class LintService:
                 debounce_seconds=self.hot_reload_debounce
             )
             
-            self.file_monitor = Observer()
+            self.file_monitor = WatchdogObserver()
             self.file_monitor.schedule(
                 event_handler,
                 self.rules_dir,
@@ -114,16 +73,7 @@ class LintService:
             
         except Exception as e:
             logger.error(f"启动watchdog监控失败: {e}")
-            logger.warning("回退到轮询模式")
-            self._start_polling_monitor()
-    
-    def _start_polling_monitor(self):
-        """启动轮询模式文件监控"""
-        self.polling_monitor = PollingFileMonitor(
-            service=self,
-            poll_interval=max(1.0, self.hot_reload_debounce * 2)  # 轮询间隔稍长
-        )
-        self.polling_monitor.start()
+            raise
     
     def load_rules_from_files(self):
         """扫描规则目录，动态加载所有规则文件"""
@@ -179,7 +129,8 @@ class LintService:
             result = self.linter.lint_string(processed_sql)
             return self._format_result(result)
     
-    def _preprocess_sql(self, sql: str) -> str:
+    @staticmethod
+    def _preprocess_sql(sql: str) -> str:
         """
         预处理SQL：
         1. 过滤掉SQLFluff无法解析的Hive SET语句
@@ -256,12 +207,9 @@ class LintService:
             self.file_monitor.stop()
             self.file_monitor.join()
             logger.info("watchdog文件监控已停止")
-        
-        if self.polling_monitor:
-            self.polling_monitor.stop()
-            logger.info("轮询文件监控已停止")
     
-    def _format_result(self, result):
+    @staticmethod
+    def _format_result(result):
         """将SQLFluff结果格式化为标准JSON"""
         formatted = []
         for violation in result.violations:

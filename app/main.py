@@ -14,7 +14,8 @@ logging.getLogger("sqlfluff").setLevel(logging.WARNING)  # 禁用sqlfluff的日�
 logger = logging.getLogger(__name__)
 
 # 全局服务实例
-lint_service = None
+from typing import Optional
+lint_service: Optional[LintService] = None
 
 # 从环境变量获取是否启用热加载，默认启用
 ENABLE_HOT_RELOAD = os.getenv("ENABLE_HOT_RELOAD", "true").lower() == "true"
@@ -52,6 +53,9 @@ class RuleFile(BaseModel):
 @app.post("/lint")
 async def lint_sql(request: SQLRequest):
     """提交SQL并返回lint结果"""
+    if lint_service is None:
+        raise HTTPException(status_code=503, detail="服务未初始化")
+    
     try:
         result = lint_service.lint_sql(request.sql)
         return {"status": "success", "result": result}
@@ -61,6 +65,9 @@ async def lint_sql(request: SQLRequest):
 @app.get("/rules")
 async def get_rules():
     """获取当前加载的规则列表"""
+    if lint_service is None:
+        raise HTTPException(status_code=503, detail="服务未初始化")
+    
     try:
         rules = lint_service.get_loaded_rules()
         return {"status": "success", "rules": rules, "hot_reload_enabled": ENABLE_HOT_RELOAD}
@@ -70,6 +77,9 @@ async def get_rules():
 @app.post("/rules/reload")
 async def reload_rules():
     """手动触发规则重新加载"""
+    if lint_service is None:
+        raise HTTPException(status_code=503, detail="服务未初始化")
+    
     try:
         success = lint_service.manual_reload()
         if success:
@@ -82,6 +92,9 @@ async def reload_rules():
 @app.get("/health")
 async def health_check():
     """健康检查端点"""
+    if lint_service is None:
+        raise HTTPException(status_code=503, detail="服务未初始化")
+    
     try:
         # 简单测试服务是否正常
         rules = lint_service.get_loaded_rules()
@@ -98,12 +111,13 @@ async def health_check():
 @app.get("/monitor/status")
 async def monitor_status():
     """获取监控器状态"""
+    if lint_service is None:
+        raise HTTPException(status_code=503, detail="服务未初始化")
+    
     try:
-        from app.services.lint_service import WATCHDOG_AVAILABLE
-        
         status = {
             "hot_reload_enabled": ENABLE_HOT_RELOAD,
-            "watchdog_available": WATCHDOG_AVAILABLE,
+            "watchdog_available": True,  # watchdog是必需依赖
             "rules_dir": lint_service.rules_dir,
             "debounce_seconds": HOT_RELOAD_DEBOUNCE
         }
