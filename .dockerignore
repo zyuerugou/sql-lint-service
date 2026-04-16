@@ -1,0 +1,91 @@
+# Docker忽略文件
+# 确保Docker镜像只包含运行应用所需的文件
+
+# 1. 排除所有隐藏文件和目录（除了特定的）
+.*
+
+# 2. 排除开发工具和IDE配置
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 3. 排除离线包目录
+offline-packages/
+
+# 4. 排除测试相关文件
+tests/
+test_*.py
+*_test.py
+*_test_*.py
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 5. 排除Python缓存和构建文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 6. 排除虚拟环境
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# 7. 排除文档（除了必要的）
+*.md
+!README.md
+!DOCKER-README.md
+docs/
+
+# 8. 排除Docker相关文件（除了Dockerfile）
+docker-build.sh
+docker-compose.yml
+.env.example
+HOT_RELOAD_README.md
+DOCKER-README.md
+
+# 9. 排除日志和数据库文件
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.cache
+
+# 10. 排除其他开发工具文件
+.tox/
+.nox/
+.hypothesis/
+
+# 11. 排除操作系统文件
+.DS_Store
+Thumbs.db
+
+# 12. 明确包含需要的文件（覆盖上面的排除规则）
+!app/
+!pyproject.toml
+!poetry.lock
+!README.md
+!DOCKER-README.md

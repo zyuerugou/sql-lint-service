@@ -7,10 +7,48 @@ from pydantic import BaseModel
 from app.services.lint_service import LintService
 import logging
 import os
+import sys
+from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] - %(name)s - %(message)s")
+# 从环境变量获取日志配置
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_DIR = os.getenv("LOG_DIR", "/app/logs")
+LOG_FILE = os.getenv("LOG_FILE", "sql-lint-service.log")
+
+# 确保日志目录存在
+log_dir_path = Path(LOG_DIR)
+log_dir_path.mkdir(parents=True, exist_ok=True)
+
+# 日志文件路径
+log_file_path = log_dir_path / LOG_FILE
+
+# 日志格式
+log_format = "%(asctime)s [%(levelname)s] - %(name)s - %(message)s"
+date_format = "%Y-%m-%d %H:%M:%S"
+
+# 配置根日志记录器
+root_logger = logging.getLogger()
+root_logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+# 清除现有的处理器
+for handler in root_logger.handlers[:]:
+    root_logger.removeHandler(handler)
+
+# 添加文件处理器
+file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
+file_handler.setFormatter(logging.Formatter(log_format, date_format))
+root_logger.addHandler(file_handler)
+
+# 添加控制台处理器（用于Docker日志）
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(logging.Formatter(log_format, date_format))
+root_logger.addHandler(console_handler)
+
+# 设置特定日志器的级别
 logging.getLogger("uvicorn").setLevel(logging.WARNING)  # 禁用uvicorn的access日志
 logging.getLogger("sqlfluff").setLevel(logging.WARNING)  # 禁用sqlfluff的日志
+logging.getLogger("watchdog").setLevel(logging.INFO)     # 设置watchdog日志级别
+
 logger = logging.getLogger(__name__)
 
 # 全局服务实例
@@ -20,6 +58,7 @@ lint_service: Optional[LintService] = None
 # 从环境变量获取是否启用热加载，默认启用
 ENABLE_HOT_RELOAD = os.getenv("ENABLE_HOT_RELOAD", "true").lower() == "true"
 HOT_RELOAD_DEBOUNCE = float(os.getenv("HOT_RELOAD_DEBOUNCE", "0.5"))
+APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,7 +66,9 @@ async def lifespan(app: FastAPI):
     global lint_service
     
     # 启动时初始化服务
-    logger.info(f"启动SQL Lint Service，热加载: {ENABLE_HOT_RELOAD}，防抖间隔: {HOT_RELOAD_DEBOUNCE}秒")
+    logger.info(f"启动SQL Lint Service v{APP_VERSION}")
+    logger.info(f"日志配置 - 级别: {LOG_LEVEL}, 目录: {LOG_DIR}, 文件: {LOG_FILE}")
+    logger.info(f"热加载配置 - 启用: {ENABLE_HOT_RELOAD}, 防抖间隔: {HOT_RELOAD_DEBOUNCE}秒")
     lint_service = LintService(
         enable_hot_reload=ENABLE_HOT_RELOAD,
         hot_reload_debounce=HOT_RELOAD_DEBOUNCE

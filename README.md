@@ -71,6 +71,13 @@ sql-lint-service/
 ├── pyproject.toml                # 项目配置
 ├── poetry.lock                   # 依赖锁文件
 ├── HOT_RELOAD_README.md          # 热加载详细文档
+├── Dockerfile                    # Docker构建文件
+├── Dockerfile.optimized          # 优化版Dockerfile
+├── docker-compose.yml            # Docker Compose配置
+├── docker-build.sh               # Docker构建和运行脚本
+├── .env.example                  # 环境变量配置示例
+├── .dockerignore                 # Docker忽略文件
+├── DOCKER-README.md              # Docker部署指南
 └── README.md                     # 本文档
 ```
 
@@ -350,18 +357,70 @@ rules = "customer,core"  # customer规则组 + SQLFluff核心规则
 4. **监控**：添加健康检查端点
 
 ### Docker部署
+
+我们提供了完整的Docker部署方案，包括：
+
+#### 1. 快速开始
+```bash
+# 使用自动化脚本（推荐）
+chmod +x docker-build.sh
+./docker-build.sh build
+./docker-build.sh run
+
+# 或使用Docker命令
+docker build -t sql-lint-service:latest .
+docker run -d -p 5000:5000 sql-lint-service:latest
+
+# 或使用Docker Compose
+docker-compose up -d
+```
+
+#### 2. 配置文件
+- `Dockerfile` - 标准Docker构建文件
+- `Dockerfile.optimized` - 优化版（多阶段构建，镜像更小）
+- `docker-compose.yml` - Docker Compose配置
+- `docker-build.sh` - 自动化构建和运行脚本
+- `.env.example` - 环境变量配置示例
+
+#### 3. 标准Dockerfile
 ```dockerfile
 FROM python:3.12-slim
 
 WORKDIR /app
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ENABLE_HOT_RELOAD=true \
+    HOT_RELOAD_DEBOUNCE=0.5 \
+    PORT=5000
+
 COPY pyproject.toml poetry.lock ./
-RUN pip install poetry && poetry install --no-dev
+RUN pip install poetry==1.8.3 && \
+    poetry config virtualenvs.create false && \
+    poetry install --no-dev --no-interaction --no-ansi
 
 COPY . .
 
-CMD ["poetry", "run", "python", "app/main.py"]
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE ${PORT}
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import requests; r = requests.get('http://localhost:${PORT}/health', timeout=2); exit(0 if r.status_code == 200 else 1)" || exit 1
+
+CMD ["python", "-m", "app.main"]
 ```
+
+#### 4. 详细文档
+详细Docker部署指南请参考 [DOCKER-README.md](DOCKER-README.md)，包括：
+- 多种部署方式
+- 配置说明
+- 生产环境建议
+- 故障排除
+- 性能优化
+- 监控和日志
 
 ## 故障排除
 
