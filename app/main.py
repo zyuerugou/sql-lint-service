@@ -60,6 +60,13 @@ ENABLE_HOT_RELOAD = os.getenv("ENABLE_HOT_RELOAD", "true").lower() == "true"
 HOT_RELOAD_DEBOUNCE = float(os.getenv("HOT_RELOAD_DEBOUNCE", "0.5"))
 APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
 
+# 优化参数配置
+TIMEOUT_SECONDS = int(os.getenv("TIMEOUT_SECONDS", "5"))
+MAX_SQL_SIZE_MB = int(os.getenv("MAX_SQL_SIZE_MB", "10"))
+ENABLE_SAMPLING = os.getenv("ENABLE_SAMPLING", "true").lower() == "true"
+SAMPLING_THRESHOLD_KB = int(os.getenv("SAMPLING_THRESHOLD_KB", "100"))
+CACHE_SIZE = int(os.getenv("CACHE_SIZE", "100"))
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -69,9 +76,15 @@ async def lifespan(app: FastAPI):
     logger.info(f"启动SQL Lint Service v{APP_VERSION}")
     logger.info(f"日志配置 - 级别: {LOG_LEVEL}, 目录: {LOG_DIR}, 文件: {LOG_FILE}")
     logger.info(f"热加载配置 - 启用: {ENABLE_HOT_RELOAD}, 防抖间隔: {HOT_RELOAD_DEBOUNCE}秒")
+    logger.info(f"优化配置 - 超时: {TIMEOUT_SECONDS}秒, 最大SQL: {MAX_SQL_SIZE_MB}MB, 采样: {ENABLE_SAMPLING}")
     lint_service = LintService(
         enable_hot_reload=ENABLE_HOT_RELOAD,
-        hot_reload_debounce=HOT_RELOAD_DEBOUNCE
+        hot_reload_debounce=HOT_RELOAD_DEBOUNCE,
+        timeout_seconds=TIMEOUT_SECONDS,
+        max_sql_size_mb=MAX_SQL_SIZE_MB,
+        enable_sampling=ENABLE_SAMPLING,
+        sampling_threshold_kb=SAMPLING_THRESHOLD_KB,
+        cache_size=CACHE_SIZE
     )
     
     yield  # 应用运行期间
@@ -115,6 +128,18 @@ async def get_rules():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/preprocessors")
+async def get_preprocessors():
+    """获取当前加载的预处理器信息"""
+    if lint_service is None:
+        raise HTTPException(status_code=503, detail="服务未初始化")
+    
+    try:
+        preprocessors = lint_service.get_loaded_preprocessors()
+        return {"status": "success", "preprocessors": preprocessors}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/rules/reload")
 async def reload_rules():
     """手动触发规则重新加载"""
@@ -144,6 +169,13 @@ async def health_check():
             "service": "sql-lint-service",
             "rules_loaded": len(rules),
             "hot_reload_enabled": ENABLE_HOT_RELOAD,
+            "optimization_config": {
+                "timeout_seconds": TIMEOUT_SECONDS,
+                "max_sql_size_mb": MAX_SQL_SIZE_MB,
+                "enable_sampling": ENABLE_SAMPLING,
+                "sampling_threshold_kb": SAMPLING_THRESHOLD_KB,
+                "cache_size": CACHE_SIZE
+            },
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:

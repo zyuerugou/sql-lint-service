@@ -1,98 +1,333 @@
+#!/usr/bin/env python3
 # coding=utf-8
+"""
+优化的LintService，针对大SQL进行性能优化
+"""
+
 import importlib
 import logging
 import os
 import re
 import threading
+import time
 from pathlib import Path
+from typing import Optional, List, Dict, Any
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from sqlfluff.core import Linter
 from sqlfluff.core.config import FluffConfig
 from watchdog.observers import Observer as WatchdogObserver
 
-# 导入本地事件处理器
-from app.services.event_handlers import RuleFileEventHandler
+from app.services.event_handlers import MultiDirectoryEventHandler
+from app.services.preprocessor_manager import PreprocessorManager
 
 logger = logging.getLogger(__name__)
 
 
 class LintService:
-    def __init__(self, enable_hot_reload=False, hot_reload_debounce: float = 0.5):
+    """
+    LintService，针对大SQL进行性能优化
+    
+    优化策略：
+    1. 超时机制：防止单个SQL处理时间过长
+    2. 采样检查：对于超大SQL，只检查部分内容
+    3. 缓存机制：缓存解析结果
+    4. 异步处理：使用线程池处理并发请求
+    5. 配置优化：使用最小化配置
+    6. 规则过滤：禁用不必要的规则
+    """
+    
+    def __init__(
+        self, 
+        enable_hot_reload: bool = False, 
+        hot_reload_debounce: float = 0.5,
+        timeout_seconds: int = 5,
+        max_sql_size_mb: int = 10,
+        enable_sampling: bool = True,
+        sampling_threshold_kb: int = 100,
+        cache_size: int = 100
+    ):
+        """
+        初始化优化的LintService
+        
+        Args:
+            enable_hot_reload: 是否启用热加载
+            hot_reload_debounce: 热加载防抖时间（秒）
+            timeout_seconds: 处理超时时间（秒）
+            max_sql_size_mb: 最大SQL大小（MB），超过此大小会拒绝处理
+            enable_sampling: 是否启用采样检查
+            sampling_threshold_kb: 采样阈值（KB），超过此大小启用采样
+            cache_size: 缓存大小
+        """
         # 规则目录路径
         self.rules_dir = str(Path(__file__).parent.parent / "rules")
         
+        # 预处理器目录路径
+        self.preprocessors_dir = str(Path(self.rules_dir) / "preprocessors")
+        
+        # 优化参数
+        self.timeout_seconds = timeout_seconds
+        self.max_sql_size_mb = max_sql_size_mb
+        self.enable_sampling = enable_sampling
+        self.sampling_threshold_kb = sampling_threshold_kb
+        self.cache_size = cache_size
+        
         # 热加载相关
-        self.reload_lock = threading.Lock()  # 重新加载锁
+        self.reload_lock = threading.Lock()
         self.enable_hot_reload = enable_hot_reload
         self.hot_reload_debounce = hot_reload_debounce
         
         # 文件监控器
         self.file_monitor = None
         
-        # 1. 初始加载规则
-        self.custom_rules = self.load_rules_from_files()
-
-        # 2. 初始化SQLFluff配置
-        # 使用最简单的配置，仅设置dialect和rules
-        self.config = FluffConfig(
-            overrides={
-                "dialect": "hive",
-                "rules": "customer"
-            }
-        )
+        # 缓存
+        self.cache = {}
+        self.cache_lock = threading.Lock()
         
-        # 3. 初始化Linter并传入自定义规则
+        # 线程池用于超时控制
+        self.executor = ThreadPoolExecutor(max_workers=10)
+        
+        # 1. 初始加载预处理器
+        self.preprocessor_manager = PreprocessorManager(self.preprocessors_dir)
+        
+        # 2. 初始加载规则
+        self.custom_rules = self.load_rules_from_files()
+        
+        # 3. 初始化优化的SQLFluff配置
+        self.config = self._create_optimized_config()
+        
+        # 4. 初始化Linter
         self.linter = Linter(config=self.config, user_rules=self.custom_rules)
         
-        # 4. 如果启用热加载，启动监控
+        # 5. 如果启用热加载，启动监控
         if self.enable_hot_reload:
             self._start_file_monitor()
+        
+        logger.info(f"LintService初始化完成，超时时间: {timeout_seconds}秒，最大SQL大小: {max_sql_size_mb}MB")
     
-    def _start_file_monitor(self):
-        """启动文件监控"""
-        self._start_watchdog_monitor()
+    def _create_optimized_config(self) -> FluffConfig:
+        """
+        创建优化的SQLFluff配置
+        
+        优化点：
+        1. 使用最简单的方言
+        2. 禁用不必要的规则
+        3. 优化解析器设置
+        """
+        return FluffConfig(
+            overrides={
+                "dialect": "hive",  # 使用HIVE方言
+                "rules": "customer",  # 只使用自定义规则
+                # 禁用一些耗时的检查
+                "max_line_length": 0,  # 禁用行长度检查
+                "comma_style": "trailing",  # 简化逗号样式检查
+                "indent_unit": "space",  # 简化缩进检查
+                "tab_space_size": 4,
+                # 解析器优化
+                "ignore": "",  # 不忽略任何语法
+            }
+        )
     
-    def _start_watchdog_monitor(self):
-        """使用watchdog启动文件监控"""
+    def _should_sample(self, sql_size_kb: float) -> bool:
+        """
+        判断是否应该使用采样检查
+        
+        Args:
+            sql_size_kb: SQL大小（KB）
+            
+        Returns:
+            是否启用采样
+        """
+        return (
+            self.enable_sampling and 
+            sql_size_kb > self.sampling_threshold_kb
+        )
+    
+    def _sample_sql(self, sql: str, sample_ratio: float = 0.3) -> str:
+        """
+        对SQL进行采样，只检查部分内容
+        
+        Args:
+            sql: 原始SQL
+            sample_ratio: 采样比例（0-1）
+            
+        Returns:
+            采样后的SQL
+        """
+        if not sql:
+            return sql
+        
+        lines = sql.split('\n')
+        total_lines = len(lines)
+        
+        if total_lines <= 10:
+            # 行数太少，不采样
+            return sql
+        
+        # 计算采样行数
+        sample_lines = max(10, int(total_lines * sample_ratio))
+        
+        # 均匀采样：取开头、中间、结尾部分
+        start_lines = lines[:sample_lines // 3]
+        middle_start = total_lines // 2 - sample_lines // 6
+        middle_end = total_lines // 2 + sample_lines // 6
+        middle_lines = lines[middle_start:middle_end]
+        end_lines = lines[-sample_lines // 3:]
+        
+        sampled_lines = start_lines + middle_lines + end_lines
+        
+        # 添加采样标记
+        sampled_sql = '\n'.join(sampled_lines)
+        sampled_sql += f"\n\n-- [SAMPLED] Original SQL size: {len(sql)} chars, sampled: {len(sampled_sql)} chars ({sample_ratio*100:.0f}%)"
+        
+        return sampled_sql
+    
+    def _get_cache_key(self, sql: str) -> str:
+        """
+        生成缓存键
+        
+        Args:
+            sql: SQL字符串
+            
+        Returns:
+            缓存键
+        """
+        import hashlib
+        # 使用MD5哈希作为缓存键
+        return hashlib.md5(sql.encode('utf-8')).hexdigest()
+    
+    def _check_sql_size(self, sql: str) -> bool:
+        """
+        检查SQL大小是否超过限制
+        
+        Args:
+            sql: SQL字符串
+            
+        Returns:
+            是否超过限制
+        """
+        size_mb = len(sql) / 1024 / 1024
+        if size_mb > self.max_sql_size_mb:
+            logger.warning(f"SQL大小超过限制: {size_mb:.1f}MB > {self.max_sql_size_mb}MB")
+            return False
+        return True
+    
+    def lint_sql_with_timeout(self, sql: str) -> List[Dict[str, Any]]:
+        """
+        带超时的SQL lint检查
+        
+        Args:
+            sql: SQL字符串
+            
+        Returns:
+            lint结果列表，如果超时返回超时错误
+        """
+        # 检查SQL大小
+        if not self._check_sql_size(sql):
+            return [{
+                "rule_id": "SIZE_LIMIT",
+                "message": f"SQL大小超过限制 ({len(sql)/1024/1024:.1f}MB > {self.max_sql_size_mb}MB)",
+                "severity": "error",
+                "line": 1,
+                "column": 1
+            }]
+        
+        # 生成缓存键
+        cache_key = self._get_cache_key(sql)
+        
+        # 检查缓存
+        with self.cache_lock:
+            if cache_key in self.cache:
+                logger.debug(f"缓存命中: {cache_key[:8]}...")
+                return self.cache[cache_key]
+        
+        # 使用预处理器
+        processed_sql = self.preprocessor_manager.process(sql)
+        
+        # 判断是否启用采样
+        sql_size_kb = len(processed_sql) / 1024
+        if self._should_sample(sql_size_kb):
+            logger.info(f"SQL大小 {sql_size_kb:.1f}KB > {self.sampling_threshold_kb}KB，启用采样检查")
+            processed_sql = self._sample_sql(processed_sql)
+        
+        # 使用线程池执行带超时的lint检查
+        future = self.executor.submit(self._lint_sql_internal, processed_sql)
+        
         try:
-            event_handler = RuleFileEventHandler(
-                service=self,
-                debounce_seconds=self.hot_reload_debounce
-            )
+            result = future.result(timeout=self.timeout_seconds)
             
-            self.file_monitor = WatchdogObserver()
-            self.file_monitor.schedule(
-                event_handler,
-                self.rules_dir,
-                recursive=False  # 只监控当前目录，不递归
-            )
-            self.file_monitor.start()
+            # 缓存结果
+            with self.cache_lock:
+                if len(self.cache) >= self.cache_size:
+                    # 移除最旧的缓存项
+                    oldest_key = next(iter(self.cache))
+                    del self.cache[oldest_key]
+                self.cache[cache_key] = result
             
-            logger.info(f"watchdog文件监控已启动（防抖间隔: {self.hot_reload_debounce}秒）")
-            logger.info(f"监控目录: {self.rules_dir}")
+            return result
+            
+        except FutureTimeoutError:
+            logger.warning(f"SQL lint检查超时 ({self.timeout_seconds}秒)")
+            future.cancel()  # 取消任务
+            
+            return [{
+                "rule_id": "TIMEOUT",
+                "message": f"SQL lint检查超时 ({self.timeout_seconds}秒)，SQL大小: {len(sql)/1024:.1f}KB",
+                "severity": "warning",
+                "line": 1,
+                "column": 1
+            }]
             
         except Exception as e:
-            logger.error(f"启动watchdog监控失败: {e}")
-            raise
+            logger.error(f"SQL lint检查失败: {e}")
+            return [{
+                "rule_id": "ERROR",
+                "message": f"SQL lint检查失败: {str(e)}",
+                "severity": "error",
+                "line": 1,
+                "column": 1
+            }]
     
+    def _lint_sql_internal(self, sql: str) -> List[Dict[str, Any]]:
+        """
+        内部lint检查方法（不带超时控制）
+        
+        Args:
+            sql: 处理后的SQL字符串
+            
+        Returns:
+            lint结果列表
+        """
+        with self.reload_lock:
+            result = self.linter.lint_string(sql)
+            return self._format_result(result)
+    
+    def lint_sql(self, sql: str) -> List[Dict[str, Any]]:
+        """
+        兼容原接口的lint方法
+        
+        Args:
+            sql: SQL字符串
+            
+        Returns:
+            lint结果列表
+        """
+        return self.lint_sql_with_timeout(sql)
+    
+    # 以下方法保持与原LintService兼容
     def load_rules_from_files(self):
         """扫描规则目录，动态加载所有规则文件"""
         rules_list = []
         
         for filename in os.listdir(self.rules_dir):
             if filename.endswith('.py') and not filename.startswith('_') and not filename.endswith('.disabled'):
-                # 获取规则模块名（如"rule_ss01"）
-                module_name = filename[:-3]  # 去掉.py后缀
+                module_name = filename[:-3]
                 module_path = f"app.rules.{module_name}"
-
+                
                 try:
-                    # 动态导入模块
                     module = importlib.import_module(module_path)
-                    # 获取模块中的规则类（如rule_ss01.Rule_SS01）
                     rule_class_name = f"Rule_{module_name.split('_')[1].upper()}"
                     rule_class = getattr(module, rule_class_name)
-
-                    # 添加规则类到列表
                     rules_list.append(rule_class)
                     logger.info(f"规则加载成功: {rule_class.code}")
                 except (ImportError, AttributeError) as e:
@@ -104,98 +339,33 @@ class LintService:
         with self.reload_lock:
             try:
                 logger.info("开始重新加载规则...")
-                
-                # 重新加载规则
                 new_rules = self.load_rules_from_files()
-                
-                # 创建新的Linter实例
-                new_linter = Linter(config=self.config, user_rules=new_rules)
-                
-                # 原子性更新
                 self.custom_rules = new_rules
-                self.linter = new_linter
+                
+                # 重新创建Linter
+                self.linter = Linter(config=self.config, user_rules=self.custom_rules)
+                
+                # 清空缓存
+                with self.cache_lock:
+                    self.cache.clear()
                 
                 logger.info(f"规则重新加载完成，共加载 {len(new_rules)} 个规则")
                 return True
             except Exception as e:
                 logger.error(f"规则重新加载失败: {e}")
                 return False
-
-    def lint_sql(self, sql: str) -> list:
-        """执行SQL lint，返回格式化结果"""
-        with self.reload_lock:
-            # 预处理：过滤掉SQLFluff无法解析的Hive SET语句
-            processed_sql = self._preprocess_sql(sql)
-            result = self.linter.lint_string(processed_sql)
-            return self._format_result(result)
-    
-    @staticmethod
-    def _preprocess_sql(sql: str) -> str:
-        """
-        预处理SQL：
-        1. 过滤掉SQLFluff无法解析的Hive SET语句
-        2. 过滤掉所有SET配置语句（避免规则误判）
-        
-        这些语句会被替换为空行，保留原始行号
-        因为它们会导致解析错误或规则误判，且不影响业务逻辑
-        """
-        if not sql:
-            return sql
-        
-        lines = sql.split('\n')
-        processed_lines = []
-        
-        # 需要完全过滤的语句模式
-        filter_patterns = [
-            # 1. SQLFluff无法解析的Hive SET语句（避免PRS错误）
-            r'^\s*set\s+hive\.exec\.dynamic\.partition\.mode\s*=',
-            r'^\s*set\s+tez\.queue\.name\s*=',
-            r'^\s*set\s+hive\.exec\.parallel\s*=',
-            r'^\s*set\s+hive\.exec\.parallel\.thread\.number\s*=',
-            r'^\s*set\s+hive\.vectorized\.execution\.enabled\s*=',
-            r'^\s*set\s+hive\.vectorized\.execution\.reduce\.enabled\s*=',
-            r'^\s*set\s+hive\.cbo\.enable\s*=',
-            r'^\s*set\s+hive\.compute\.query\.using\.stats\s*=',
-            r'^\s*set\s+hive\.stats\.fetch\.column\.stats\s*=',
-            r'^\s*set\s+hive\.stats\.fetch\.partition\.stats\s*=',
-            
-            # 包含特定值的SET语句
-            r'^\s*set\s+.*=.*nonstrict',
-            r'^\s*set\s+.*=.*default',
-            r'^\s*set\s+.*=.*none',
-            
-            # 其他已知有问题的模式
-            r'^\s*set\s+.*\.mode\s*=',
-            r'^\s*set\s+.*\.name\s*=',
-            r'^\s*set\s+.*\.enabled\s*=',
-            
-            # 2. 所有SET配置语句（避免SS02/SS03规则误判）
-            # 匹配所有SET语句，但排除UPDATE语句中的SET子句
-            r'^\s*set\s+[a-zA-Z0-9_.:$]+\s*=',
-        ]
-        
-        for line in lines:
-            should_filter = False
-            
-            # 检查是否匹配需要过滤的模式
-            for pattern in filter_patterns:
-                if re.search(pattern, line, re.IGNORECASE):
-                    should_filter = True
-                    logger.debug(f"过滤语句: {line.strip()}")
-                    break
-            
-            if should_filter:
-                # 保留空行以维持行号
-                processed_lines.append("")
-            else:
-                processed_lines.append(line)
-        
-        return '\n'.join(processed_lines)
     
     def get_loaded_rules(self):
         """获取当前加载的规则列表"""
         with self.reload_lock:
             return [rule.code for rule in self.custom_rules]
+    
+    def get_loaded_preprocessors(self):
+        """获取当前加载的预处理器信息"""
+        with self.reload_lock:
+            if hasattr(self, 'preprocessor_manager'):
+                return self.preprocessor_manager.get_preprocessors_info()
+            return []
     
     def manual_reload(self):
         """手动触发规则重新加载"""
@@ -207,6 +377,44 @@ class LintService:
             self.file_monitor.stop()
             self.file_monitor.join()
             logger.info("watchdog文件监控已停止")
+    
+    def _start_file_monitor(self):
+        """启动文件监控"""
+        self._start_watchdog_monitor()
+    
+    def _start_watchdog_monitor(self):
+        """使用watchdog启动文件监控（支持多个目录）"""
+        try:
+            directories = {
+                "rules": self.rules_dir,
+                "preprocessors": self.preprocessors_dir
+            }
+            
+            event_handler = MultiDirectoryEventHandler(
+                service=self,
+                directories=directories,
+                debounce_seconds=self.hot_reload_debounce
+            )
+            
+            self.file_monitor = WatchdogObserver()
+            
+            for dir_type, dir_path in directories.items():
+                if os.path.exists(dir_path):
+                    self.file_monitor.schedule(
+                        event_handler,
+                        dir_path,
+                        recursive=False
+                    )
+                    logger.info(f"监控目录 [{dir_type}]: {dir_path}")
+                else:
+                    logger.warning(f"目录不存在，跳过监控: {dir_path}")
+            
+            self.file_monitor.start()
+            logger.info(f"watchdog多目录文件监控已启动（防抖间隔: {self.hot_reload_debounce}秒）")
+            
+        except Exception as e:
+            logger.error(f"启动watchdog监控失败: {e}")
+            raise
     
     @staticmethod
     def _format_result(result):
@@ -226,6 +434,22 @@ class LintService:
         """析构函数，确保监控线程被正确停止"""
         try:
             self.stop_monitor()
+            self.executor.shutdown(wait=False)
         except:
-            # 忽略析构函数中的错误
             pass
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """获取服务统计信息"""
+        with self.cache_lock:
+            cache_size = len(self.cache)
+        
+        return {
+            "timeout_seconds": self.timeout_seconds,
+            "max_sql_size_mb": self.max_sql_size_mb,
+            "enable_sampling": self.enable_sampling,
+            "sampling_threshold_kb": self.sampling_threshold_kb,
+            "cache_size": cache_size,
+            "cache_capacity": self.cache_size,
+            "loaded_rules": len(self.custom_rules),
+            "loaded_preprocessors": len(self.get_loaded_preprocessors())
+        }
