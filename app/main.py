@@ -66,6 +66,8 @@ MAX_SQL_SIZE_MB = int(os.getenv("MAX_SQL_SIZE_MB", "10"))
 ENABLE_SAMPLING = os.getenv("ENABLE_SAMPLING", "true").lower() == "true"
 SAMPLING_THRESHOLD_KB = int(os.getenv("SAMPLING_THRESHOLD_KB", "100"))
 CACHE_SIZE = int(os.getenv("CACHE_SIZE", "100"))
+# SQL方言配置，支持：ansi, hive, sparksql, oracle, mysql, postgres等
+SQL_DIALECT = os.getenv("SQL_DIALECT", "ansi")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -76,7 +78,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"启动SQL Lint Service v{APP_VERSION}")
     logger.info(f"日志配置 - 级别: {LOG_LEVEL}, 目录: {LOG_DIR}, 文件: {LOG_FILE}")
     logger.info(f"热加载配置 - 启用: {ENABLE_HOT_RELOAD}, 防抖间隔: {HOT_RELOAD_DEBOUNCE}秒")
-    logger.info(f"优化配置 - 超时: {TIMEOUT_SECONDS}秒, 最大SQL: {MAX_SQL_SIZE_MB}MB, 采样: {ENABLE_SAMPLING}")
+    logger.info(f"优化配置 - 超时: {TIMEOUT_SECONDS}秒, 最大SQL: {MAX_SQL_SIZE_MB}MB, 采样: {ENABLE_SAMPLING}, 方言: {SQL_DIALECT}")
     lint_service = LintService(
         enable_hot_reload=ENABLE_HOT_RELOAD,
         hot_reload_debounce=HOT_RELOAD_DEBOUNCE,
@@ -84,7 +86,8 @@ async def lifespan(app: FastAPI):
         max_sql_size_mb=MAX_SQL_SIZE_MB,
         enable_sampling=ENABLE_SAMPLING,
         sampling_threshold_kb=SAMPLING_THRESHOLD_KB,
-        cache_size=CACHE_SIZE
+        cache_size=CACHE_SIZE,
+        sql_dialect=SQL_DIALECT
     )
     
     yield  # 应用运行期间

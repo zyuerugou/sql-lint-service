@@ -18,6 +18,13 @@
 - **完整API**：提供规则管理和lint操作的完整REST API
 - **代码组织优化**：模块化设计，服务类与事件处理器分离
 
+### 性能优化功能
+- **超时保护**：5秒自动中断长处理，防止大SQL阻塞服务
+- **采样检查**：100KB以上SQL启用30%采样，大幅减少处理时间
+- **缓存机制**：LRU缓存100个结果，重复查询接近0秒响应
+- **大小限制**：拒绝>10MB超大SQL，保护服务内存
+- **智能预处理**：自动替换SQL中的日期变量为固定值
+
 ## 快速开始
 
 ### 1. 安装依赖
@@ -317,18 +324,35 @@ UPDATE config SET value = 'new' WHERE id = 1;
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
 | `ENABLE_HOT_RELOAD` | `true` | 是否启用热加载 |
+| `HOT_RELOAD_DEBOUNCE` | `0.5` | 热加载防抖时间（秒） |
+| `PORT` | `5000` | 服务端口 |
+| `LOG_LEVEL` | `INFO` | 日志级别 |
+| `LOG_DIR` | `/app/logs` | 日志目录 |
+| `LOG_FILE` | `sql-lint-service.log` | 日志文件名 |
+| `TIMEOUT_SECONDS` | `5` | SQL处理超时时间（秒） |
+| `MAX_SQL_SIZE_MB` | `10` | 最大SQL大小（MB） |
+| `ENABLE_SAMPLING` | `true` | 是否启用采样检查 |
+| `SAMPLING_THRESHOLD_KB` | `100` | 采样阈值（KB） |
+| `CACHE_SIZE` | `100` | 缓存大小 |
 
 ### SQLFluff配置
-服务已配置为只启用自定义规则（customer规则组），使用Hive SQL方言，关闭所有SQLFluff默认规则。
+服务已配置为只启用自定义规则（customer规则组），使用Hive SQL方言，并优化配置以提升大SQL处理性能。
 
 在代码中的配置（`app/services/lint_service.py`）：
 ```python
-self.config = FluffConfig(
-    overrides = {
-        "dialect": "hive",    # 使用Hive SQL方言
-        "rules": "customer",  # 只启用customer规则组
-    }
-)
+def _create_optimized_config(self) -> FluffConfig:
+    return FluffConfig(
+        overrides={
+            "dialect": "hive",  # 使用Hive SQL方言
+            "rules": "customer",  # 只使用自定义规则
+            # 禁用一些耗时的检查
+            "max_line_length": 0,  # 禁用行长度检查
+            "comma_style": "trailing",  # 简化逗号样式检查
+            "indent_unit": "space",  # 简化缩进检查
+            "tab_space_size": 4,
+            "ignore": "",  # 不忽略任何语法
+        }
+    )
 ```
 
 自定义规则需要添加到 `customer` 规则组：

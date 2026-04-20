@@ -53,6 +53,11 @@ docker run -d \
   -p 5000:5000 \
   -e ENABLE_HOT_RELOAD=true \
   -e HOT_RELOAD_DEBOUNCE=0.5 \
+  -e TIMEOUT_SECONDS=5 \
+  -e MAX_SQL_SIZE_MB=10 \
+  -e ENABLE_SAMPLING=true \
+  -e SAMPLING_THRESHOLD_KB=100 \
+  -e CACHE_SIZE=100 \
   -v $(pwd)/app/rules:/app/app/rules:ro \
   -v $(pwd)/logs:/app/logs \
   sql-lint-service:latest
@@ -100,6 +105,13 @@ docker-compose up -d --build
 | `HOT_RELOAD_DEBOUNCE` | `0.5` | 热加载防抖间隔（秒） |
 | `PORT` | `5000` | 服务端口 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
+| `LOG_DIR` | `/app/logs` | 日志目录 |
+| `LOG_FILE` | `sql-lint-service.log` | 日志文件名 |
+| `TIMEOUT_SECONDS` | `5` | SQL处理超时时间（秒） |
+| `MAX_SQL_SIZE_MB` | `10` | 最大SQL大小（MB） |
+| `ENABLE_SAMPLING` | `true` | 是否启用采样检查 |
+| `SAMPLING_THRESHOLD_KB` | `100` | 采样阈值（KB） |
+| `CACHE_SIZE` | `100` | 缓存大小 |
 
 ### 卷挂载
 

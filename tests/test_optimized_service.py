@@ -5,7 +5,7 @@
 
 import sys
 import time
-sys.path.insert(0, '.')
+sys.path.insert(0, '..')
 
 from app.services.lint_service import LintService  # 优化版本
 

@@ -9,7 +9,7 @@ import cProfile
 import pstats
 import io
 import random
-sys.path.insert(0, '.')
+sys.path.insert(0, '..')
 
 from app.services.lint_service import LintService
 

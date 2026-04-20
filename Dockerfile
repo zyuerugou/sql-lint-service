@@ -17,7 +17,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     LOG_LEVEL=INFO \
     LOG_DIR=/app/logs \
     LOG_FILE=sql-lint-service.log \
-    APP_VERSION=${VERSION}
+    APP_VERSION=${VERSION} \
+    # 优化参数
+    TIMEOUT_SECONDS=5 \
+    MAX_SQL_SIZE_MB=10 \
+    ENABLE_SAMPLING=true \
+    SAMPLING_THRESHOLD_KB=100 \
+    CACHE_SIZE=100 \
+    SQL_DIALECT=ansi
 
 # 安装系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \

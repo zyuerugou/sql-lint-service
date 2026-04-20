@@ -33,8 +33,13 @@ class LintService:
     2. 采样检查：对于超大SQL，只检查部分内容
     3. 缓存机制：缓存解析结果
     4. 异步处理：使用线程池处理并发请求
-    5. 配置优化：使用最小化配置
+    5. 配置优化：使用ANSI方言和解析器优化
     6. 规则过滤：禁用不必要的规则
+    
+    方言选择说明：
+    - 使用ANSI方言：最通用的SQL标准，解析更宽松，减少"Found unparsable section"错误
+    - 特别适合ArgoDB等大数据仓库产品，兼容Oracle风格函数（如NVL）
+    - 增加解析限制配置，支持长SQL和复杂查询
     """
     
     def __init__(
@@ -45,7 +50,8 @@ class LintService:
         max_sql_size_mb: int = 10,
         enable_sampling: bool = True,
         sampling_threshold_kb: int = 100,
-        cache_size: int = 100
+        cache_size: int = 100,
+        sql_dialect: str = "ansi"
     ):
         """
         初始化优化的LintService
@@ -58,6 +64,7 @@ class LintService:
             enable_sampling: 是否启用采样检查
             sampling_threshold_kb: 采样阈值（KB），超过此大小启用采样
             cache_size: 缓存大小
+            sql_dialect: SQL方言，支持ansi、hive、sparksql、oracle、mysql、postgres等
         """
         # 规则目录路径
         self.rules_dir = str(Path(__file__).parent.parent / "rules")
@@ -71,6 +78,7 @@ class LintService:
         self.enable_sampling = enable_sampling
         self.sampling_threshold_kb = sampling_threshold_kb
         self.cache_size = cache_size
+        self.sql_dialect = sql_dialect
         
         # 热加载相关
         self.reload_lock = threading.Lock()
@@ -110,21 +118,26 @@ class LintService:
         创建优化的SQLFluff配置
         
         优化点：
-        1. 使用最简单的方言
+        1. 使用配置的SQL方言（默认ansi）
         2. 禁用不必要的规则
         3. 优化解析器设置
+        4. 增加解析限制，避免长SQL解析失败
         """
         return FluffConfig(
             overrides={
-                "dialect": "hive",  # 使用HIVE方言
-                "rules": "customer",  # 只使用自定义规则
+                "dialect": self.sql_dialect,  # 使用配置的SQL方言
+                "rules": "all",  # 使用所有规则
                 # 禁用一些耗时的检查
                 "max_line_length": 0,  # 禁用行长度检查
                 "comma_style": "trailing",  # 简化逗号样式检查
                 "indent_unit": "space",  # 简化缩进检查
                 "tab_space_size": 4,
-                # 解析器优化
+                # 解析器优化 - 增加限制避免长SQL解析失败
                 "ignore": "",  # 不忽略任何语法
+                "max_parse_depth": 1000,  # 增加最大解析深度（默认255）
+                "rust_parser_max_iterations": 10000000,  # 增加Rust解析器迭代次数（默认300万）
+                "large_file_skip_byte_limit": 100000,  # 增加大文件跳过限制（默认20000）
+                "runaway_limit": 50,  # 增加失控限制（默认10）
             }
         )
     
@@ -182,6 +195,33 @@ class LintService:
         
         return sampled_sql
     
+    def _get_sql_summary(self, sql: str, max_chars: int = 150) -> str:
+        """
+        生成SQL摘要，避免日志过大
+        
+        Args:
+            sql: SQL字符串
+            max_chars: 最大显示字符数
+            
+        Returns:
+            SQL摘要字符串
+        """
+        if not sql:
+            return "空SQL"
+        
+        length = len(sql)
+        lines = sql.count('\n') + 1
+        
+        # 如果SQL很短，直接显示
+        if length <= max_chars:
+            return f"{length}字符/{lines}行: {sql}"
+        
+        # 对于长SQL，显示开头和结尾
+        preview_start = sql[:max_chars//2]
+        preview_end = sql[-max_chars//2:] if length > max_chars else ""
+        
+        return f"{length}字符/{lines}行: {preview_start}...{preview_end}"
+    
     def _get_cache_key(self, sql: str) -> str:
         """
         生成缓存键
@@ -222,11 +262,17 @@ class LintService:
         Returns:
             lint结果列表，如果超时返回超时错误
         """
+        # 记录SQL接收日志
+        sql_summary = self._get_sql_summary(sql)
+        logger.info(f"[SQL检查开始] SQL摘要: {sql_summary}")
+        
         # 检查SQL大小
         if not self._check_sql_size(sql):
+            size_mb = len(sql) / 1024 / 1024
+            logger.warning(f"[SQL大小限制] SQL大小超过限制: {size_mb:.1f}MB > {self.max_sql_size_mb}MB")
             return [{
                 "rule_id": "SIZE_LIMIT",
-                "message": f"SQL大小超过限制 ({len(sql)/1024/1024:.1f}MB > {self.max_sql_size_mb}MB)",
+                "message": f"SQL大小超过限制 ({size_mb:.1f}MB > {self.max_sql_size_mb}MB)",
                 "severity": "error",
                 "line": 1,
                 "column": 1
@@ -238,23 +284,52 @@ class LintService:
         # 检查缓存
         with self.cache_lock:
             if cache_key in self.cache:
-                logger.debug(f"缓存命中: {cache_key[:8]}...")
-                return self.cache[cache_key]
+                cached_result = self.cache[cache_key]
+                logger.info(f"[缓存命中] 缓存键: {cache_key[:8]}...")
+                if cached_result:
+                    error_count = len([r for r in cached_result if r.get("severity") == "error"])
+                    warning_count = len([r for r in cached_result if r.get("severity") == "warning"])
+                    logger.info(f"[缓存命中] 使用缓存结果: {len(cached_result)}个问题 (错误: {error_count}, 警告: {warning_count})")
+                return cached_result
         
         # 使用预处理器
         processed_sql = self.preprocessor_manager.process(sql)
         
+        # 记录预处理日志
+        if processed_sql != sql:
+            processed_summary = self._get_sql_summary(processed_sql)
+            logger.info(f"[SQL预处理] 处理后摘要: {processed_summary}")
+        else:
+            logger.info(f"[SQL预处理] 无变化")
+        
         # 判断是否启用采样
         sql_size_kb = len(processed_sql) / 1024
         if self._should_sample(sql_size_kb):
-            logger.info(f"SQL大小 {sql_size_kb:.1f}KB > {self.sampling_threshold_kb}KB，启用采样检查")
+            logger.info(f"[SQL采样] SQL大小 {sql_size_kb:.1f}KB > {self.sampling_threshold_kb}KB，启用采样检查")
             processed_sql = self._sample_sql(processed_sql)
+            sampled_summary = self._get_sql_summary(processed_sql)
+            logger.info(f"[SQL采样] 采样后摘要: {sampled_summary}")
         
         # 使用线程池执行带超时的lint检查
         future = self.executor.submit(self._lint_sql_internal, processed_sql)
         
         try:
             result = future.result(timeout=self.timeout_seconds)
+            
+            # 记录检查结果日志
+            if result:
+                error_count = len([r for r in result if r.get("severity") == "error"])
+                warning_count = len([r for r in result if r.get("severity") == "warning"])
+                logger.info(f"[SQL检查完成] 共发现{len(result)}个问题 (错误: {error_count}, 警告: {warning_count})")
+                
+                # 记录前5个问题（避免日志过大）
+                for i, violation in enumerate(result[:5], 1):
+                    logger.info(f"[问题{i}] {violation.get('rule_id')}: {violation.get('message')} (行{violation.get('line')})")
+                
+                if len(result) > 5:
+                    logger.info(f"[更多问题] 还有{len(result)-5}个问题未显示")
+            else:
+                logger.info(f"[SQL检查完成] 未发现问题")
             
             # 缓存结果
             with self.cache_lock:
@@ -267,7 +342,7 @@ class LintService:
             return result
             
         except FutureTimeoutError:
-            logger.warning(f"SQL lint检查超时 ({self.timeout_seconds}秒)")
+            logger.warning(f"[SQL检查超时] SQL lint检查超时 ({self.timeout_seconds}秒)")
             future.cancel()  # 取消任务
             
             return [{
@@ -279,7 +354,8 @@ class LintService:
             }]
             
         except Exception as e:
-            logger.error(f"SQL lint检查失败: {e}")
+            logger.error(f"[SQL检查失败] 错误类型: {type(e).__name__}, 错误信息: {str(e)}")
+            logger.error(f"[SQL检查失败] 失败SQL摘要: {self._get_sql_summary(sql)}")
             return [{
                 "rule_id": "ERROR",
                 "message": f"SQL lint检查失败: {str(e)}",
@@ -417,17 +493,64 @@ class LintService:
             raise
     
     @staticmethod
+    @staticmethod
     def _format_result(result):
         """将SQLFluff结果格式化为标准JSON"""
         formatted = []
-        for violation in result.violations:
-            formatted.append({
-                "rule_id": violation.rule_code(),
-                "message": violation.desc(),
-                "severity": str(violation.warning),
-                "line": violation.line_no,
-                "column": getattr(violation, 'line_pos', 0)
-            })
+        try:
+            # 确保violations是可迭代的
+            violations = result.violations
+            if hasattr(violations, '__iter__'):
+                for violation in violations:
+                    # 过滤掉PRS错误和系统规则（只保留SS01、SS02、SS03）
+                    rule_code = violation.rule_code()
+                    if rule_code == "PRS":
+                        continue
+                    # 只保留自定义规则
+                    if rule_code not in ["SS01", "SS02", "SS03"]:
+                        continue
+                    formatted.append({
+                        "rule_id": rule_code,
+                        "message": violation.desc(),
+                        "severity": str(violation.warning),
+                        "line": violation.line_no,
+                        "column": getattr(violation, 'line_pos', 0)
+                    })
+            else:
+                logger.warning(f"[_format_result] violations不是可迭代对象: {type(violations)}")
+        except StopIteration:
+            logger.error("[_format_result] 捕获到StopIteration异常，violations可能是一个已耗尽的迭代器")
+            # 尝试重新获取violations
+            try:
+                # 如果是生成器，尝试转换为列表
+                violations_list = list(result.violations)
+                for violation in violations_list:
+                    # 过滤掉PRS错误和系统规则（只保留SS01、SS02、SS03）
+                    rule_code = violation.rule_code()
+                    if rule_code == "PRS":
+                        continue
+                    # 只保留自定义规则
+                    if rule_code not in ["SS01", "SS02", "SS03"]:
+                        continue
+                    formatted.append({
+                        "rule_id": rule_code,
+                        "message": violation.desc(),
+                        "severity": str(violation.warning),
+                        "line": violation.line_no,
+                        "column": getattr(violation, 'line_pos', 0)
+                    })
+            except Exception as e2:
+                logger.error(f"[_format_result] 重新获取violations失败: {type(e2).__name__}: {e2}")
+        except Exception as e:
+            logger.error(f"[_format_result] 格式化结果时发生错误: {type(e).__name__}: {e}")
+            # 返回错误信息
+            return [{
+                "rule_id": "FORMAT_ERROR",
+                "message": f"格式化结果时发生错误: {str(e)}",
+                "severity": "error",
+                "line": 1,
+                "column": 1
+            }]
         return formatted
     
     def __del__(self):

@@ -4,7 +4,7 @@
 """
 
 import sys
-sys.path.insert(0, '.')
+sys.path.insert(0, '..')
 
 from app.rules.preprocessors.date_variable_preprocessor import DateVariablePreprocessor
 from app.rules.preprocessors.set_statement_filter_preprocessor import SetStatementFilterPreprocessor

@@ -12,6 +12,12 @@ services:
       - ENABLE_HOT_RELOAD=${ENABLE_HOT_RELOAD:-true}
       - HOT_RELOAD_DEBOUNCE=${HOT_RELOAD_DEBOUNCE:-0.5}
       - PORT=5000
+      # 优化参数
+      - TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-5}
+      - MAX_SQL_SIZE_MB=${MAX_SQL_SIZE_MB:-10}
+      - ENABLE_SAMPLING=${ENABLE_SAMPLING:-true}
+      - SAMPLING_THRESHOLD_KB=${SAMPLING_THRESHOLD_KB:-100}
+      - CACHE_SIZE=${CACHE_SIZE:-100}
     volumes:
       - ./app/rules:/app/app/rules:ro
       - ./logs:/app/logs

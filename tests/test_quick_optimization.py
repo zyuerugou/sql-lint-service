@@ -5,7 +5,7 @@
 
 import sys
 import time
-sys.path.insert(0, '.')
+sys.path.insert(0, '..')
 
 # 测试优化服务的关键功能
 from app.services.lint_service import LintService

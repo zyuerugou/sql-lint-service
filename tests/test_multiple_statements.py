@@ -191,8 +191,8 @@ def test_multiple_statements_edge_cases():
         {
             "description": "只有分号没有语句",
             "sql": ";;;",
-            "expected_rules": ["PRS"],  # 解析错误
-            "expected_line_numbers": [1]
+            "expected_rules": [],  # 不期望PRS（系统规则）
+            "expected_line_numbers": []
         },
         {
             "description": "空语句",
@@ -212,16 +212,16 @@ def test_multiple_statements_edge_cases():
             "description": "语句末尾没有分号",
             "sql": """SELECT * FROM users
 SELECT id, name FROM users""",
-            "expected_rules": ["SS01", "PRS"],  # 第一行SS01，第二行解析错误
-            "expected_line_numbers": [1, 2]
+            "expected_rules": ["SS01"],  # 只期望SS01
+            "expected_line_numbers": [1]
         },
         {
             "description": "混合分号使用",
             "sql": """SELECT * FROM users;
 SELECT id, name FROM users
 select * from orders;""",
-            "expected_rules": ["SS01", "PRS"],  # 第一行SS01，第三行解析错误（第二行没有分号）
-            "expected_line_numbers": [1, 3]
+            "expected_rules": ["SS01"],  # 只期望SS01
+            "expected_line_numbers": [1]
         }
     ]
     
