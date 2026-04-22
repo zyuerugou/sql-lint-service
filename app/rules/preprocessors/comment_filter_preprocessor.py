@@ -25,7 +25,7 @@ class CommentFilterPreprocessor(BasePreprocessor):
         super().__init__()
         self.name = "CommentFilterPreprocessor"
         self.description = "将SQL中的注释替换为空格，保持行结构不变"
-        self.order = 50  # 在变量替换之后，SET语句过滤之前执行
+        self.order = 10  # 最优先执行，先移除注释避免其他预处理器误判
     
     def process(self, sql: str, context: Optional[Dict[str, Any]] = None) -> str:
         """
