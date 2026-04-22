@@ -3,19 +3,21 @@ FROM python:3.12-slim as builder
 
 WORKDIR /app
 
-# 安装构建依赖
+# 安装构建依赖并清理缓存以减小镜像大小
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/*
 
 # 复制依赖文件
 COPY pyproject.toml poetry.lock ./
 
-# 安装poetry和项目依赖到虚拟环境
+# 安装poetry和项目依赖到虚拟环境，使用--no-cache避免缓存
 RUN pip install --no-cache-dir poetry==1.8.3 && \
     poetry config virtualenvs.in-project true && \
-    poetry install --no-dev --no-interaction --no-ansi
+    poetry install --no-dev --no-interaction --no-ansi --no-cache
 
 # 运行阶段
 FROM python:3.12-slim
@@ -47,9 +49,14 @@ COPY --from=builder /app/.venv /app/.venv
 # 复制应用代码（使用.dockerignore排除不需要的文件）
 COPY app/ app/
 
-# 创建非root用户
+# 创建非root用户并清理不必要的文件
 RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser /app && \
+    # 清理Python字节码缓存和临时文件
+    find /app -type f -name '*.pyc' -delete && \
+    find /app -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true && \
+    # 清理其他不必要的文件
+    rm -rf /root/.cache /home/appuser/.cache
 USER appuser
 
 # 暴露端口
