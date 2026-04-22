@@ -19,6 +19,7 @@ import sqlglot.errors
 
 from app.rules.sqlglot_base import SQLGlotRuleLoader
 from app.services.preprocessor_manager import PreprocessorManager
+from app.utils.position_recorder import PositionRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -199,10 +200,10 @@ class LintService:
         else:
             sql_to_parse = sql
         
-        # 解析SQL - 使用parse解析多个语句
+        # 解析SQL - 使用位置记录器解析并记录位置
         try:
             logger.debug(f"开始解析SQL (方言: {self.sql_dialect})")
-            asts = sqlglot.parse(sql_to_parse, read=self.sql_dialect)
+            asts = PositionRecorder.parse_with_positions(sql_to_parse, self.sql_dialect)
             logger.debug(f"SQL解析成功，得到{len(asts)}个语句")
             
             # 如果没有解析出任何语句，可能SQL是空的或只有注释

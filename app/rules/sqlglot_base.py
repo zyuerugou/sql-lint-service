@@ -75,9 +75,11 @@ class SQLGlotBaseRule(ABC):
             "class_name": self.__class__.__name__
         }
     
-    def _get_position(self, expr: exp.Expression, sql: str = "", ast_start_pos: int = 0) -> tuple:
+    def _get_position(self, expr: exp.Expression, sql: str = "") -> tuple:
         """
         获取表达式的位置信息
+        
+        优先从节点的meta属性读取位置信息，如果没有则尝试计算。
         
         Args:
             expr: sqlglot表达式
@@ -87,11 +89,15 @@ class SQLGlotBaseRule(ABC):
             (行号, 列号)，如果无法获取返回(1, 1)
         """
         try:
-            # 首先尝试从sqlglot的token位置获取
-            # sqlglot 24.x版本中，位置信息可能不在meta中
+            # 方法1: 优先从节点的meta属性读取位置
+            if hasattr(expr, 'meta') and expr.meta:
+                line = expr.meta.get('line', 0)
+                col = expr.meta.get('col', 0)
+                if line > 0 and col > 0:
+                    return line, col
             
-            # 方法1: 检查是否有直接的位置属性
-            # 检查更多可能的属性名，包括sqlglot不同版本使用的
+            # 方法2: 检查是否有直接的位置属性
+            # sqlglot某些版本可能将位置信息存储在节点属性中
             line_attrs = ['line', 'start_line', 'this_line', 'line_no']
             col_attrs = ['col', 'start_col', 'this_col', 'column_no']
             
@@ -118,111 +124,18 @@ class SQLGlotBaseRule(ABC):
             if line > 0 and col > 0:
                 return line, col
             
-            # 如果只找到了行号，尝试找对应的列号
+            # 如果只找到了行号或列号
             if line > 0:
-                # 尝试从其他属性找列号
-                for attr_name in ['col', 'start_col', 'this_col', 'column_no', 'start']:
-                    if hasattr(expr, attr_name):
-                        value = getattr(expr, attr_name)
-                        if value and isinstance(value, int) and value > 0:
-                            return line, value
                 return line, 1
-            
-            # 如果只找到了列号，尝试找对应的行号
             if col > 0:
-                # 尝试从其他属性找行号
-                for attr_name in ['line', 'start_line', 'this_line', 'line_no']:
-                    if hasattr(expr, attr_name):
-                        value = getattr(expr, attr_name)
-                        if value and isinstance(value, int) and value > 0:
-                            return value, col
                 return 1, col
             
-            # 方法2: 检查meta字典
-            if hasattr(expr, 'meta') and expr.meta:
-                line = expr.meta.get('line', 1)
-                col = expr.meta.get('col', 1)
-                if line != 1 or col != 1:
-                    return line, col
-            
-            # 方法3: 对于特定类型的表达式，使用上下文感知的位置查找
-            if sql:
-                # 导入re模块
-                import re
-                
-                # 对于Column节点，特别处理
-                if isinstance(expr, exp.Column) and hasattr(expr, 'name') and expr.name:
-                    # 检查是否在SELECT中
-                    parent = expr.parent
-                    if parent and isinstance(parent, exp.Select):
-                        # 获取SELECT的SQL
-                        select_sql = parent.sql()
-                        
-                        # 在SELECT SQL中查找列名
-                        col_match = re.search(re.escape(expr.name), select_sql, re.IGNORECASE)
-                        if col_match:
-                            # 尝试找到这个SELECT在完整SQL中的位置
-                            # 首先找到包含这个SELECT的根表达式（如Insert）
-                            root_expr = expr
-                            while root_expr.parent:
-                                root_expr = root_expr.parent
-                                if isinstance(root_expr, (exp.Insert, exp.Select, exp.Create, exp.Update, exp.Delete)):
-                                    break
-                            
-                            # 获取根表达式的SQL
-                            root_sql = root_expr.sql() if hasattr(root_expr, 'sql') else ""
-                            
-                            if root_sql:
-                                # 在完整SQL中查找根表达式
-                                # 使用更精确的查找：确保匹配完整的单词
-                                root_pattern = re.escape(root_sql)
-                                root_matches = list(re.finditer(root_pattern, sql, re.IGNORECASE))
-                                
-                                if root_matches:
-                                    # 如果有多个匹配，选择最可能的一个
-                                    # 对于我们的情况，选择最后一个匹配（假设相同的INSERT语句在后面）
-                                    root_match = root_matches[-1]
-                                    root_start = root_match.start()
-                                    
-                                    # 在根表达式中查找SELECT
-                                    root_text = sql[root_start:root_start + len(root_sql)]
-                                    select_in_root = re.search(r'\bSELECT\b', root_text, re.IGNORECASE)
-                                    
-                                    if select_in_root:
-                                        select_start = root_start + select_in_root.start()
-                                        
-                                        # 列在SELECT中的位置
-                                        col_in_select = col_match.start()
-                                        
-                                        # 列在整个SQL中的位置
-                                        col_in_sql = select_start + col_in_select
-                                        
-                                        # 计算行和列
-                                        lines_before = sql[:col_in_sql].split('\n')
-                                        line_num = len(lines_before)
-                                        
-                                        if line_num > 0:
-                                            last_line_start = sql.rfind('\n', 0, col_in_sql)
-                                            if last_line_start == -1:
-                                                col_num = col_in_sql + 1  # 第一行
-                                            else:
-                                                col_num = col_in_sql - last_line_start
-                                        else:
-                                            col_num = col_in_sql + 1
-                                        
-                                        return line_num, col_num
-            
-            # 方法4: 如果有原始SQL，尝试在SQL中查找表达式（大小写敏感）
+            # 方法3: 如果有原始SQL，尝试在SQL中查找表达式
             if sql:
                 # 根据表达式类型生成查找模式
                 pattern = self._get_expression_pattern(expr)
                 if pattern:
-                    # 首先尝试大小写敏感查找
-                    line, col = self._find_in_sql(pattern, sql, case_sensitive=True)
-                    if line != 1 or col != 1:
-                        return line, col
-                    
-                    # 如果大小写敏感没找到，再尝试大小写不敏感
+                    # 尝试查找
                     line, col = self._find_in_sql(pattern, sql, case_sensitive=False)
                     if line != 1 or col != 1:
                         return line, col

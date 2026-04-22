@@ -51,7 +51,8 @@ class RuleSs03Sqlglot(SQLGlotBaseRule):
                 continue
             
             # 检查是否已经处理过相同位置和名称的标识符
-            position_key = (name, line, col)
+            # 使用更严格的位置检查：同一行，列号相同
+            position_key = (line, col, name)
             if position_key in processed_positions:
                 continue
             processed_positions.add(position_key)
