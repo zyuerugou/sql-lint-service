@@ -110,11 +110,11 @@ class MultiDirectoryEventHandler(FileSystemEventHandler):
             
             if dir_type == "rules":
                 # 重新加载规则
-                self.service.reload_rules()
+                self.service.reload_rules(changed_files)
             elif dir_type == "preprocessors":
                 # 重新加载预处理器
                 if hasattr(self.service, 'preprocessor_manager'):
-                    self.service.preprocessor_manager.reload()
+                    self.service.preprocessor_manager.reload(changed_files)
                 else:
                     logger.warning("服务没有预处理器管理器，无法重新加载预处理器")
             else:

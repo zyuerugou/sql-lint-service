@@ -391,6 +391,47 @@ class LintService:
         return self.lint_sql_with_timeout(sql)
     
     # 以下方法保持与原LintService兼容
+    def _clear_rule_module_cache(self, changed_files=None):
+        """
+        清理发生变动的规则模块缓存
+        
+        Args:
+            changed_files: 发生变动的文件列表（可选）
+        """
+        import sys
+        
+        # 规则模块前缀
+        module_prefix = "app.rules."
+        
+        # 如果没有指定变动的文件，清理所有相关模块
+        if changed_files is None:
+            modules_to_delete = []
+            for module_name in list(sys.modules.keys()):
+                if module_name.startswith(module_prefix):
+                    modules_to_delete.append(module_name)
+            
+            # 删除模块
+            for module_name in modules_to_delete:
+                try:
+                    del sys.modules[module_name]
+                    logger.debug(f"已清理规则模块缓存: {module_name}")
+                except Exception as e:
+                    logger.warning(f"清理规则模块缓存失败 {module_name}: {e}")
+        else:
+            # 只清理变动文件对应的模块
+            for file_path in changed_files:
+                # 提取文件名（不带扩展名）
+                from pathlib import Path
+                file_name = Path(file_path).stem
+                module_name = f"{module_prefix}{file_name}"
+                
+                if module_name in sys.modules:
+                    try:
+                        del sys.modules[module_name]
+                        logger.debug(f"已清理变动规则文件的模块缓存: {module_name}")
+                    except Exception as e:
+                        logger.warning(f"清理规则模块缓存失败 {module_name}: {e}")
+    
     def load_rules_from_files(self):
         """扫描规则目录，动态加载所有规则文件"""
         rules_list = []
@@ -410,11 +451,23 @@ class LintService:
                     logger.error(f"加载规则失败: {filename}, 错误: {e}")
         return rules_list
     
-    def reload_rules(self):
-        """重新加载所有规则"""
+    def reload_rules(self, changed_files=None):
+        """
+        重新加载所有规则
+        
+        Args:
+            changed_files: 发生变动的文件列表（可选）
+            
+        Returns:
+            是否成功
+        """
         with self.reload_lock:
             try:
                 logger.info("开始重新加载规则...")
+                
+                # 清理发生变动的规则模块缓存
+                self._clear_rule_module_cache(changed_files)
+                
                 new_rules = self.load_rules_from_files()
                 self.custom_rules = new_rules
                 

@@ -36,6 +36,46 @@ class PreprocessorManager:
         self.preprocessors: List[Any] = []
         self._load_preprocessors()
     
+    def _clear_module_cache(self, changed_files=None):
+        """
+        清理发生变动的预处理器模块缓存
+        
+        Args:
+            changed_files: 发生变动的文件列表（可选），如果为None则清理所有
+        """
+        import sys
+        
+        # 要清理的模块前缀
+        module_prefix = "app.rules.preprocessors."
+        
+        # 如果没有指定变动的文件，清理所有相关模块
+        if changed_files is None:
+            modules_to_delete = []
+            for module_name in list(sys.modules.keys()):
+                if module_name.startswith(module_prefix):
+                    modules_to_delete.append(module_name)
+            
+            # 删除模块
+            for module_name in modules_to_delete:
+                try:
+                    del sys.modules[module_name]
+                    logger.debug(f"已清理模块缓存: {module_name}")
+                except Exception as e:
+                    logger.warning(f"清理模块缓存失败 {module_name}: {e}")
+        else:
+            # 只清理变动文件对应的模块
+            for file_path in changed_files:
+                # 提取文件名（不带扩展名）
+                file_name = Path(file_path).stem
+                module_name = f"{module_prefix}{file_name}"
+                
+                if module_name in sys.modules:
+                    try:
+                        del sys.modules[module_name]
+                        logger.debug(f"已清理变动文件的模块缓存: {module_name}")
+                    except Exception as e:
+                        logger.warning(f"清理模块缓存失败 {module_name}: {e}")
+    
     def _load_preprocessors(self):
         """加载所有预处理器"""
         self.preprocessors.clear()
@@ -136,9 +176,21 @@ class PreprocessorManager:
         
         return info_list
     
-    def reload(self):
-        """重新加载预处理器"""
+    def reload(self, changed_files=None):
+        """
+        重新加载预处理器
+        
+        Args:
+            changed_files: 发生变动的文件列表（可选）
+            
+        Returns:
+            加载后的预处理器数量
+        """
         logger.info("重新加载预处理器...")
+        
+        # 清理发生变动的模块缓存
+        self._clear_module_cache(changed_files)
+        
         old_count = len(self.preprocessors)
         self._load_preprocessors()
         new_count = len(self.preprocessors)
