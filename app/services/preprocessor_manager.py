@@ -45,10 +45,13 @@ class PreprocessorManager:
         """
         import sys
         
-        # 预处理器相关模块前缀（包含父包）
+        # 预处理器相关模块前缀
         module_prefixes = ["app.rules.preprocessors", "app.rules"]
         
         modules_to_delete = []
+        changed_stems = set()
+        if changed_files is not None:
+            changed_stems = {Path(f).stem for f in changed_files}
         
         # 收集所有需要清理的模块
         for module_name in list(sys.modules.keys()):
@@ -57,16 +60,14 @@ class PreprocessorManager:
                     if changed_files is None:
                         modules_to_delete.append(module_name)
                     else:
-                        # 只清理变动文件对应的模块
-                        file_name = module_name
-                        if file_name.startswith("app.rules.preprocessors."):
-                            file_name = file_name[len("app.rules.preprocessors."):]
-                        elif file_name.startswith("app.rules."):
-                            file_name = file_name[len("app.rules."):]
-                        for file_path in changed_files:
-                            if Path(file_path).stem == file_name:
+                        # 父包始终清理
+                        if module_name == prefix:
+                            modules_to_delete.append(module_name)
+                        else:
+                            # 子模块：提取模块名
+                            file_name = module_name[len(prefix) + 1:]
+                            if file_name in changed_stems:
                                 modules_to_delete.append(module_name)
-                                break
                     break
         
         # 删除模块

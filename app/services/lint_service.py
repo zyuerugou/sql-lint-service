@@ -404,6 +404,10 @@ class LintService:
         module_prefix = "app.rules"
         
         modules_to_delete = []
+        changed_stems = set()
+        if changed_files is not None:
+            from pathlib import Path
+            changed_stems = {Path(f).stem for f in changed_files}
         
         # 收集所有需要清理的模块
         for module_name in list(sys.modules.keys()):
@@ -411,15 +415,16 @@ class LintService:
                 if changed_files is None:
                     modules_to_delete.append(module_name)
                 else:
-                    # 只清理变动文件对应的模块
-                    file_name = module_name[len(module_prefix) + 1:]
-                    for file_path in changed_files:
-                        from pathlib import Path
-                        if Path(file_path).stem == file_name:
+                    # 父包 app.rules 始终清理（子模块变动需要父包刷新）
+                    if module_name == module_prefix:
+                        modules_to_delete.append(module_name)
+                    else:
+                        # 子模块：提取模块名部分（如 rule_ss03）
+                        file_name = module_name[len(module_prefix) + 1:]
+                        if file_name in changed_stems:
                             modules_to_delete.append(module_name)
-                            break
         
-        # 删除模块（包括父包，确保重新加载时完全刷新）
+        # 删除模块
         for module_name in modules_to_delete:
             try:
                 del sys.modules[module_name]
