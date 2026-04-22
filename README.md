@@ -1,15 +1,17 @@
 # SQL Lint Service
 
-一个基于SQLFluff的SQL语法检查和规则验证服务，支持自定义规则和热加载功能。
+一个基于SQLGlot的高性能SQL语法检查和规则验证服务，支持自定义规则和热加载功能。
 
 ## 功能特性
 
 ### 核心功能
-- SQL语法检查和格式化
-- 自定义linting规则
-- REST API接口
+- **高性能SQL解析**：基于sqlglot，比sqlfluff快24.69倍
+- **SQL语法检查和格式化**：支持20+种SQL方言
+- **自定义linting规则**：动态加载，无需重启服务
+- **REST API接口**：完全兼容现有客户端
 - **多语句SQL支持**：支持分号分隔的多个SQL语句一次性检查
 - **SET语句过滤**：自动过滤Hive SET配置语句，避免规则误判
+- **ArgoDB语法支持**：支持NVL函数、DECIMAL(30,6)等星环ArgoDB特有语法
 
 ### 高级功能
 - **规则热加载**：无需重启服务即可动态添加、修改、删除规则
@@ -34,7 +36,15 @@ poetry install
 
 # 或使用pip
 pip install -r requirements.txt
+
+# 开发依赖（可选）
+pip install -r requirements-dev.txt
 ```
+
+**注意**：本项目已从sqlfluff迁移到sqlglot，提供：
+- 24.69倍性能提升
+- 更好的复杂SQL解析能力
+- 原生支持ArgoDB等大数据平台语法
 
 ### 2. 启动服务
 ```bash

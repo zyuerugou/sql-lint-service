@@ -58,6 +58,7 @@ venv.bak/
 *.md
 !README.md
 !DOCKER-README.md
+!CHANGELOG.md
 docs/
 
 # 8. 排除Docker相关文件（除了Dockerfile）
@@ -88,4 +89,3 @@ Thumbs.db
 !pyproject.toml
 !poetry.lock
 !README.md
-!DOCKER-README.md

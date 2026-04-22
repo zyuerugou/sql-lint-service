@@ -4,6 +4,7 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException
 import uvicorn
 from pydantic import BaseModel
+# 导入Lint服务
 from app.services.lint_service import LintService
 import logging
 import os
@@ -46,7 +47,6 @@ root_logger.addHandler(console_handler)
 
 # 设置特定日志器的级别
 logging.getLogger("uvicorn").setLevel(logging.WARNING)  # 禁用uvicorn的access日志
-logging.getLogger("sqlfluff").setLevel(logging.WARNING)  # 禁用sqlfluff的日志
 logging.getLogger("watchdog").setLevel(logging.INFO)     # 设置watchdog日志级别
 
 logger = logging.getLogger(__name__)
@@ -66,8 +66,9 @@ MAX_SQL_SIZE_MB = int(os.getenv("MAX_SQL_SIZE_MB", "10"))
 ENABLE_SAMPLING = os.getenv("ENABLE_SAMPLING", "true").lower() == "true"
 SAMPLING_THRESHOLD_KB = int(os.getenv("SAMPLING_THRESHOLD_KB", "100"))
 CACHE_SIZE = int(os.getenv("CACHE_SIZE", "100"))
-# SQL方言配置，支持：ansi, hive, sparksql, oracle, mysql, postgres等
-SQL_DIALECT = os.getenv("SQL_DIALECT", "ansi")
+# SQL方言配置，支持：hive, spark, presto, trino, mysql, postgres等
+# 注意：sqlglot的方言名称可能与sqlfluff不同，hive方言对ArgoDB支持最好
+SQL_DIALECT = os.getenv("SQL_DIALECT", "hive")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -102,10 +103,6 @@ app = FastAPI(lifespan=lifespan)
 
 class SQLRequest(BaseModel):
     sql: str  # 请求体：SQL语句
-
-class RuleFile(BaseModel):
-    filename: str
-    content: str
 
 @app.post("/lint")
 async def lint_sql(request: SQLRequest):
@@ -203,6 +200,9 @@ async def monitor_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-if __name__ == "__main__":
-    # host="0.0.0.0", port=5000
+def main():
+    """主函数入口"""
     uvicorn.run(app, host="0.0.0.0", port=5000)
+
+if __name__ == "__main__":
+    main()

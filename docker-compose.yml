@@ -17,13 +17,14 @@ services:
       - MAX_SQL_SIZE_MB=${MAX_SQL_SIZE_MB:-10}
       - ENABLE_SAMPLING=${ENABLE_SAMPLING:-true}
       - SAMPLING_THRESHOLD_KB=${SAMPLING_THRESHOLD_KB:-100}
-      - CACHE_SIZE=${CACHE_SIZE:-100}
+       - CACHE_SIZE=${CACHE_SIZE:-100}
+       - SQL_DIALECT=${SQL_DIALECT:-hive}
     volumes:
       - ./app/rules:/app/app/rules:ro
       - ./logs:/app/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "python", "-c", "import requests; r = requests.get('http://localhost:5000/health', timeout=2); exit(0 if r.status_code == 200 else 1)"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -39,12 +40,12 @@ services:
     container_name: sql-lint-test
     command: >
       sh -c "sleep 10 && 
-             python -m pytest tests/test_set_statements.py tests/test_multiple_statements.py -v &&
-             python -m pytest tests/test_rules_integration.py -v"
+             python -m pytest tests/ -v"
     environment:
       - ENABLE_HOT_RELOAD=false
     depends_on:
-      - sql-lint-service
+      sql-lint-service:
+        condition: service_healthy
     networks:
       - sql-lint-network
 

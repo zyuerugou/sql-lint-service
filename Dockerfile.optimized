@@ -39,7 +39,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ENABLE_SAMPLING=true \
     SAMPLING_THRESHOLD_KB=100 \
     CACHE_SIZE=100 \
-    SQL_DIALECT=ansi
+    SQL_DIALECT=hive
 
 # 从构建阶段复制虚拟环境
 COPY --from=builder /app/.venv /app/.venv

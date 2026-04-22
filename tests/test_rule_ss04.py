@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # coding=utf-8
 """
-测试SS03规则：标识符应当为小写
+测试SS04规则：检查表别名使用
 """
 
 import sys
@@ -9,25 +9,33 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
 
 import sqlglot
-from app.rules.rule_ss03_sqlglot import RuleSs03Sqlglot
+from app.rules.rule_ss04_sqlglot import RuleSs04Sqlglot
 
 
-def test_rule_ss03():
-    """测试SS03规则功能"""
+def test_rule_ss04():
+    """测试SS04规则功能"""
     print("=" * 60)
-    print("测试SS03规则：标识符应当为小写")
+    print("测试SS04规则：检查表别名使用")
     print("=" * 60)
     
-    rule = RuleSs03Sqlglot()
+    rule = RuleSs04Sqlglot()
     print(f"规则信息: {rule.get_info()}")
     
     # 测试用例
     test_cases = [
-        ("SELECT UserID FROM UserTable", True),  # 应该触发
-        ("SELECT userid FROM usertable", False),  # 不应该触发
-        ("SELECT id, name FROM users", False),  # 小写，不触发
-        ("SELECT 'MixedCase' as alias FROM table", False),  # 字符串字面量，不触发
-        ("SELECT CAST(id AS VARCHAR) FROM table", False),  # 类型名，不触发
+        ("SELECT * FROM users u", True),  # 别名u太短
+        ("SELECT * FROM users t1", True),  # 别名t1无意义
+        ("SELECT * FROM users user_info", False),  # 别名有意义
+        ("""
+        SELECT * FROM (
+            SELECT id FROM users
+        ) t
+        """, True),  # 子查询别名t无意义
+        ("""
+        SELECT * FROM (
+            SELECT id FROM users
+        ) user_data
+        """, False),  # 子查询别名有意义
     ]
     
     all_pass = True
@@ -41,10 +49,8 @@ def test_rule_ss03():
             
             if violations:
                 print(f"  触发规则: 是, 违规数: {len(violations)}")
-                for v in violations[:3]:  # 只显示前3个
+                for v in violations:
                     print(f"    - 行{v.line}: {v.message}")
-                if len(violations) > 3:
-                    print(f"    ...还有{len(violations)-3}个违规")
                 
                 if should_trigger:
                     print("  结果: [OK] 符合预期")
@@ -66,13 +72,13 @@ def test_rule_ss03():
     
     print("\n" + "=" * 60)
     if all_pass:
-        print("[PASS] SS03规则测试通过")
+        print("[PASS] SS04规则测试通过")
         return True
     else:
-        print("[FAIL] SS03规则测试失败")
+        print("[FAIL] SS04规则测试失败")
         return False
 
 
 if __name__ == "__main__":
-    success = test_rule_ss03()
+    success = test_rule_ss04()
     sys.exit(0 if success else 1)

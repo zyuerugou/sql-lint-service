@@ -2,7 +2,8 @@
 FROM python:3.12-slim
 
 # 构建参数
-ARG VERSION=0.1.0
+ARG VERSION=0.2.0
+ARG POETRY_VERSION=2.3.1
 
 # 设置工作目录
 WORKDIR /app
@@ -24,37 +25,41 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ENABLE_SAMPLING=true \
     SAMPLING_THRESHOLD_KB=100 \
     CACHE_SIZE=100 \
-    SQL_DIALECT=ansi
+    SQL_DIALECT=hive
 
-# 安装系统依赖
+# 安装系统依赖（sqlglot是纯Python实现，不需要编译依赖）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
-COPY pyproject.toml poetry.lock ./
+# 复制依赖文件和文档
+COPY pyproject.toml poetry.lock README.md CHANGELOG.md ./
 
-# 安装poetry（版本与本地一致：2.3.1）和项目依赖
-RUN pip install --no-cache-dir poetry==2.3.1 && \
+# 安装poetry和项目依赖（不安装当前项目）
+RUN pip install --no-cache-dir poetry==${POETRY_VERSION} && \
     poetry config virtualenvs.create false && \
     poetry install --only=main --no-root --no-interaction --no-ansi
 
-# 复制应用代码（使用.dockerignore排除不需要的文件）
-COPY app/ app/
+# 复制应用代码
+COPY --chown=appuser:appuser app/ app/
 
 # 创建日志目录和非root用户
 RUN mkdir -p /app/logs && \
     useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
+
+# 清理缓存以减少镜像大小
+RUN poetry cache clear --all --no-interaction && \
+    pip cache purge
+
 USER appuser
 
 # 暴露端口
 EXPOSE ${PORT}
 
-# 健康检查
+# 健康检查（使用Python的requests替代curl）
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/health || exit 1
+    CMD python -c "import requests; r = requests.get('http://localhost:${PORT}/health', timeout=2); exit(0 if r.status_code == 200 else 1)" || exit 1
 
 # 启动命令
 CMD ["python", "-m", "app.main"]

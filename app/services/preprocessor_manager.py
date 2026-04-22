@@ -1,9 +1,11 @@
+# coding=utf-8
 """
 预处理器管理器
 管理所有SQL预处理器，按顺序执行预处理，支持热部署
 """
 
 import os
+import sys
 import importlib
 import logging
 from pathlib import Path
@@ -64,6 +66,17 @@ class PreprocessorManager:
                     # 构建模块路径
                     module_name = f"app.rules.preprocessors.{py_file.stem}"
                     
+                    # 清理模块缓存（如果存在）
+                    # 需要清理所有相关的模块缓存
+                    modules_to_remove = []
+                    for cached_module in list(sys.modules.keys()):
+                        if cached_module == module_name or cached_module.startswith(module_name + '.'):
+                            modules_to_remove.append(cached_module)
+                    
+                    for module_to_remove in modules_to_remove:
+                        del sys.modules[module_to_remove]
+                        logger.debug(f"清理模块缓存: {module_to_remove}")
+                    
                     # 导入模块
                     module = importlib.import_module(module_name)
                     
@@ -71,14 +84,22 @@ class PreprocessorManager:
                     for attr_name in dir(module):
                         attr = getattr(module, attr_name)
                         if isinstance(attr, type) and attr_name != 'BasePreprocessor':
-                            # 使用BasePreprocessor验证实现
-                            if BasePreprocessor.validate_implementation(attr):
-                                # 实例化预处理器
-                                preprocessor = attr()
-                                self.preprocessors.append(preprocessor)
-                                logger.info(f"加载预处理器: {attr_name} (order={preprocessor.order})")
-                            elif attr_name.endswith('Preprocessor'):
-                                logger.warning(f"跳过无效预处理器类: {attr_name} (未正确实现BasePreprocessor)")
+                            # 检查是否是预处理器类
+                            if attr_name.endswith('Preprocessor'):
+                                # 简化验证：检查是否有必要的方法和属性
+                                if (hasattr(attr, 'process') and 
+                                    callable(getattr(attr, 'process', None)) and
+                                    hasattr(attr, 'order') and
+                                    isinstance(getattr(attr, 'order', None), int)):
+                                    # 实例化预处理器
+                                    try:
+                                        preprocessor = attr()
+                                        self.preprocessors.append(preprocessor)
+                                        logger.info(f"加载预处理器: {attr_name} (order={preprocessor.order})")
+                                    except Exception as e:
+                                        logger.error(f"实例化预处理器 {attr_name} 失败: {e}")
+                                else:
+                                    logger.warning(f"跳过无效预处理器类: {attr_name} (缺少必要的方法或属性)")
                             
                 except Exception as e:
                     logger.error(f"加载预处理器 {py_file.name} 失败: {e}")

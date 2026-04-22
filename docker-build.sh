@@ -60,21 +60,21 @@ read_version() {
 build_image() {
     local version=$(read_version)
     local tag=${1:-"sql-lint-service:$version"}
-    
+
     print_message "开始构建Docker镜像: $tag (版本: $version)"
-    
+
     # 构建镜像，传递版本号参数
     docker build \
         --build-arg VERSION="$version" \
         -t "$tag" \
         .
-    
+
     # 同时打上latest标签
     if [[ "$tag" == "sql-lint-service:"* ]]; then
         docker tag "$tag" "sql-lint-service:latest"
         print_message "同时标记为: sql-lint-service:latest"
     fi
-    
+
     if [ $? -eq 0 ]; then
         print_message "Docker镜像构建成功: $tag"
         print_message "同时标记为: sql-lint-service:latest"
@@ -88,9 +88,9 @@ build_image() {
 run_container() {
     local tag=${1:-"sql-lint-service:latest"}
     local port=${2:-"5000"}
-    
+
     print_message "启动容器，映射端口: $port"
-    
+
     if [ "$DOCKER_COMPOSE" = true ]; then
         docker-compose up -d
     else
@@ -103,7 +103,7 @@ run_container() {
             -v "$(pwd)/logs:/app/logs" \
             "$tag"
     fi
-    
+
     if [ $? -eq 0 ]; then
         print_message "容器启动成功"
         print_message "服务地址: http://localhost:$port"
@@ -117,14 +117,14 @@ run_container() {
 # 停止容器
 stop_container() {
     print_message "停止容器..."
-    
+
     if [ "$DOCKER_COMPOSE" = true ]; then
         docker-compose down
     else
         docker stop sql-lint-service 2>/dev/null || true
         docker rm sql-lint-service 2>/dev/null || true
     fi
-    
+
     print_message "容器已停止"
 }
 
@@ -176,7 +176,7 @@ show_logs() {
 show_status() {
     print_message "容器状态:"
     docker ps -a --filter "name=sql-lint-service"
-    
+
     print_message "\n镜像信息:"
     docker images | grep sql-lint-service
 }
@@ -184,10 +184,10 @@ show_status() {
 # 运行测试
 run_tests() {
     print_message "运行测试..."
-    
+
     # 构建测试镜像
     docker build -t sql-lint-test -f Dockerfile .
-    
+
     # 运行测试
     docker run --rm \
         -e ENABLE_HOT_RELOAD=false \
@@ -206,7 +206,7 @@ restart_container() {
 main() {
     check_docker
     check_docker_compose
-    
+
     case "$1" in
         build)
             build_image "$2"
