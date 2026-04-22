@@ -7,7 +7,10 @@ class Rule_SS03(BaseRule):
     """除了关键字、双引号、引号内的内容以外，表名和字段名应当为小写"""
     
     groups = ("all", "customer")
+    code = "SS03"
+    description = "除了关键字、双引号、引号内的内容以外，表名和字段名应当为小写。"
     crawl_behaviour = SegmentSeekerCrawler({"identifier", "naked_identifier", "quoted_identifier"})
+    config_keywords = []
     
     def _eval(self, context: RuleContext):
         # 获取当前segment

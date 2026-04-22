@@ -546,7 +546,6 @@ class LintService:
             raise
     
     @staticmethod
-    @staticmethod
     def _format_result(result):
         """将SQLFluff结果格式化为标准JSON"""
         formatted = []
