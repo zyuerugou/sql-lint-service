@@ -401,36 +401,31 @@ class LintService:
         import sys
         
         # 规则模块前缀
-        module_prefix = "app.rules."
+        module_prefix = "app.rules"
         
-        # 如果没有指定变动的文件，清理所有相关模块
-        if changed_files is None:
-            modules_to_delete = []
-            for module_name in list(sys.modules.keys()):
-                if module_name.startswith(module_prefix):
+        modules_to_delete = []
+        
+        # 收集所有需要清理的模块
+        for module_name in list(sys.modules.keys()):
+            if module_name == module_prefix or module_name.startswith(f"{module_prefix}."):
+                if changed_files is None:
                     modules_to_delete.append(module_name)
-            
-            # 删除模块
-            for module_name in modules_to_delete:
-                try:
-                    del sys.modules[module_name]
-                    logger.debug(f"已清理规则模块缓存: {module_name}")
-                except Exception as e:
-                    logger.warning(f"清理规则模块缓存失败 {module_name}: {e}")
-        else:
-            # 只清理变动文件对应的模块
-            for file_path in changed_files:
-                # 提取文件名（不带扩展名）
-                from pathlib import Path
-                file_name = Path(file_path).stem
-                module_name = f"{module_prefix}{file_name}"
-                
-                if module_name in sys.modules:
-                    try:
-                        del sys.modules[module_name]
-                        logger.debug(f"已清理变动规则文件的模块缓存: {module_name}")
-                    except Exception as e:
-                        logger.warning(f"清理规则模块缓存失败 {module_name}: {e}")
+                else:
+                    # 只清理变动文件对应的模块
+                    file_name = module_name[len(module_prefix) + 1:]
+                    for file_path in changed_files:
+                        from pathlib import Path
+                        if Path(file_path).stem == file_name:
+                            modules_to_delete.append(module_name)
+                            break
+        
+        # 删除模块（包括父包，确保重新加载时完全刷新）
+        for module_name in modules_to_delete:
+            try:
+                del sys.modules[module_name]
+                logger.debug(f"已清理规则模块缓存: {module_name}")
+            except Exception as e:
+                logger.warning(f"清理规则模块缓存失败 {module_name}: {e}")
     
     def load_rules_from_files(self):
         """扫描规则目录，动态加载所有规则文件"""
@@ -478,10 +473,10 @@ class LintService:
                 with self.cache_lock:
                     self.cache.clear()
                 
-                logger.info(f"规则重新加载完成，共加载 {len(new_rules)} 个规则")
+                logger.info(f"规则重新加载完成，共加载 {len(new_rules)} 个规则: {[r.__name__ for r in new_rules]}")
                 return True
             except Exception as e:
-                logger.error(f"规则重新加载失败: {e}")
+                logger.error(f"规则重新加载失败: {e}", exc_info=True)
                 return False
     
     def get_loaded_rules(self):
