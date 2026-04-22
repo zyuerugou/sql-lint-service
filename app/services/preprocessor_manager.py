@@ -45,36 +45,37 @@ class PreprocessorManager:
         """
         import sys
         
-        # 要清理的模块前缀
-        module_prefix = "app.rules.preprocessors."
+        # 预处理器相关模块前缀（包含父包）
+        module_prefixes = ["app.rules.preprocessors", "app.rules"]
         
-        # 如果没有指定变动的文件，清理所有相关模块
-        if changed_files is None:
-            modules_to_delete = []
-            for module_name in list(sys.modules.keys()):
-                if module_name.startswith(module_prefix):
-                    modules_to_delete.append(module_name)
-            
-            # 删除模块
-            for module_name in modules_to_delete:
-                try:
-                    del sys.modules[module_name]
-                    logger.debug(f"已清理模块缓存: {module_name}")
-                except Exception as e:
-                    logger.warning(f"清理模块缓存失败 {module_name}: {e}")
-        else:
-            # 只清理变动文件对应的模块
-            for file_path in changed_files:
-                # 提取文件名（不带扩展名）
-                file_name = Path(file_path).stem
-                module_name = f"{module_prefix}{file_name}"
-                
-                if module_name in sys.modules:
-                    try:
-                        del sys.modules[module_name]
-                        logger.debug(f"已清理变动文件的模块缓存: {module_name}")
-                    except Exception as e:
-                        logger.warning(f"清理模块缓存失败 {module_name}: {e}")
+        modules_to_delete = []
+        
+        # 收集所有需要清理的模块
+        for module_name in list(sys.modules.keys()):
+            for prefix in module_prefixes:
+                if module_name == prefix or module_name.startswith(f"{prefix}."):
+                    if changed_files is None:
+                        modules_to_delete.append(module_name)
+                    else:
+                        # 只清理变动文件对应的模块
+                        file_name = module_name
+                        if file_name.startswith("app.rules.preprocessors."):
+                            file_name = file_name[len("app.rules.preprocessors."):]
+                        elif file_name.startswith("app.rules."):
+                            file_name = file_name[len("app.rules."):]
+                        for file_path in changed_files:
+                            if Path(file_path).stem == file_name:
+                                modules_to_delete.append(module_name)
+                                break
+                    break
+        
+        # 删除模块
+        for module_name in modules_to_delete:
+            try:
+                del sys.modules[module_name]
+                logger.debug(f"已清理模块缓存: {module_name}")
+            except Exception as e:
+                logger.warning(f"清理模块缓存失败 {module_name}: {e}")
     
     def _load_preprocessors(self):
         """加载所有预处理器"""
