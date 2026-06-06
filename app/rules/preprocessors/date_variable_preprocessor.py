@@ -18,10 +18,10 @@ class DateVariablePreprocessor(BasePreprocessor):
     日期变量预处理器
     
     功能：
-    1. 替换SQL中的日期变量为实际日期值
+    1. 替换SQL中的日期变量为可逆占位符 _v_{name}_
     2. 参照references/dateutils.py中的get_useful_date方法
     3. 使用固定batch_date=20251231计算日期变量
-    4. 不在get_useful_date方法内的变量替换为默认值
+    4. 不在get_useful_date方法内的变量替换为占位符
     """
     
     # 预处理器执行顺序（在SET过滤器之后，变量替换器之前）
@@ -35,57 +35,57 @@ class DateVariablePreprocessor(BasePreprocessor):
         # 默认变量映射（当batch_date未提供或变量不在get_useful_date中时使用）
         # 基于batch_date=20251231计算
         self.default_variables = {
-            # 基础日期变量
-            "batch_date": "20251231",
-            "batch_yyyymm": "202512",
-            "next_date": "20260101",
-            "last_date": "20251230",
-            "max_date": "20991231",
-            "min_date": "19000101",
+            # 基础日期变量（使用可逆占位符 _v_{name}_ 而非实际日期值）
+            "batch_date": "_v_batch_date_",
+            "batch_yyyymm": "_v_batch_yyyymm_",
+            "next_date": "_v_next_date_",
+            "last_date": "_v_last_date_",
+            "max_date": "_v_max_date_",
+            "min_date": "_v_min_date_",
             
             # 周相关
-            "retain_week": "20251224",
-            "week_start": "20251229",
-            "week_end": "20260104",
-            "next_week_start": "20260105",
-            "next_week_end": "20260111",
-            "last_week_start": "20251222",
-            "last_week_end": "20251228",
+            "retain_week": "_v_retain_week_",
+            "week_start": "_v_week_start_",
+            "week_end": "_v_week_end_",
+            "next_week_start": "_v_next_week_start_",
+            "next_week_end": "_v_next_week_end_",
+            "last_week_start": "_v_last_week_start_",
+            "last_week_end": "_v_last_week_end_",
             
             # 月相关
-            "retain_month": "20251130",
-            "month_start": "20251201",
-            "month_end": "20251231",
-            "next_month_start": "20260101",
-            "next_month_end": "20260131",
-            "last_month_start": "20251101",
-            "last_month_end": "20251130",
-            "last_month_yyyymm": "202511",
-            "previous_month_start": "20251001",
-            "previous_month_end": "20251031",
-            "previous_month_yyyymm": "202510",
+            "retain_month": "_v_retain_month_",
+            "month_start": "_v_month_start_",
+            "month_end": "_v_month_end_",
+            "next_month_start": "_v_next_month_start_",
+            "next_month_end": "_v_next_month_end_",
+            "last_month_start": "_v_last_month_start_",
+            "last_month_end": "_v_last_month_end_",
+            "last_month_yyyymm": "_v_last_month_yyyymm_",
+            "previous_month_start": "_v_previous_month_start_",
+            "previous_month_end": "_v_previous_month_end_",
+            "previous_month_yyyymm": "_v_previous_month_yyyymm_",
             
             # 季度相关
-            "quarter_start": "20251001",
-            "quarter_end": "20251231",
-            "next_quarter_start": "20260101",
-            "next_quarter_end": "20260331",
-            "last_quarter_start": "20250701",
-            "last_quarter_end": "20250930",
+            "quarter_start": "_v_quarter_start_",
+            "quarter_end": "_v_quarter_end_",
+            "next_quarter_start": "_v_next_quarter_start_",
+            "next_quarter_end": "_v_next_quarter_end_",
+            "last_quarter_start": "_v_last_quarter_start_",
+            "last_quarter_end": "_v_last_quarter_end_",
             
             # 年相关
-            "year_start": "20250101",
-            "year_end": "20251231",
-            "next_year_start": "20260101",
-            "next_year_end": "20261231",
-            "last_year_start": "20240101",
-            "last_year_end": "20241231",
-            "last_year_bath_date": "20241231",
-            "year_before_last_bath_date": "20231231",
+            "year_start": "_v_year_start_",
+            "year_end": "_v_year_end_",
+            "next_year_start": "_v_next_year_start_",
+            "next_year_end": "_v_next_year_end_",
+            "last_year_start": "_v_last_year_start_",
+            "last_year_end": "_v_last_year_end_",
+            "last_year_bath_date": "_v_last_year_bath_date_",
+            "year_before_last_bath_date": "_v_year_before_last_bath_date_",
             
             # 时间戳相关
-            "batch_timestamp": "2025-12-31 00:00:00.000000",
-            "batch_timestamp_with_t": "2025-12-31T00:00:00.000000",
+            "batch_timestamp": "_v_batch_timestamp_",
+            "batch_timestamp_with_t": "_v_batch_timestamp_with_t_",
         }
         
         # get_useful_date方法返回的所有变量名
@@ -172,8 +172,8 @@ class DateVariablePreprocessor(BasePreprocessor):
             else:
                 # 不是日期变量，使用默认值替换
                 # 这里可以添加更多的默认值
-                default_value = "DEFAULT_VALUE"
-                logger.warning(f"变量 {var_name} 不在get_useful_date中，使用默认值: {default_value}")
+                default_value = f"_v_{var_name}_"
+                logger.warning(f"变量 {var_name} 不在get_useful_date中，使用占位符: {default_value}")
                 return default_value
         
         result = self.variable_pattern.sub(replace_variable, sql)
@@ -183,9 +183,9 @@ class DateVariablePreprocessor(BasePreprocessor):
         """获取预处理器信息"""
         info = super().get_info()
         info.update({
-            "description": "日期变量预处理器（参照dateutils.py，使用batch_date=20251231）",
+            "description": "日期变量预处理器（替换为可逆占位符 _v_{name}_）",
             "requires_batch_date": False,
-            "default_batch_date": "20251231",
+            "default_batch_date": "_v_batch_date_",
             "useful_date_variables_count": len(self.useful_date_variables),
             "default_variables_count": len(self.default_variables),
             "abstract_base": False

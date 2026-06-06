@@ -118,13 +118,13 @@ async def lint_sql(request: SQLRequest):
 
 @app.post("/fix")
 async def fix_sql(request: SQLRequest):
-    """提交SQL并返回自动修正后的SQL"""
+    """提交SQL并返回自动修正后的SQL（返回语句数组）"""
     if lint_service is None:
         raise HTTPException(status_code=503, detail="服务未初始化")
 
     try:
-        fixed_sql = lint_service.fix_sql(request.sql)
-        return {"status": "success", "fixed_sql": fixed_sql}
+        statements = lint_service.fix_sql(request.sql)
+        return {"status": "success", "statements": statements}
     except Exception as e:
         logger.error(f"SQL自动修复失败: {e}")
         raise HTTPException(status_code=500, detail="SQL自动修复失败")

@@ -121,14 +121,14 @@ class LintService:
         3. 优化解析器设置
         4. 增加解析限制，避免长SQL解析失败
         """
-        return FluffConfig(
+        config = FluffConfig(
             overrides={
                 "dialect": self.sql_dialect,  # 使用配置的SQL方言
                 "rules": "all",  # 使用所有规则
                 # 禁用一些耗时的检查
                 "max_line_length": 0,  # 禁用行长度检查
-                "comma_style": "trailing",  # 简化逗号样式检查
-                "indent_unit": "space",  # 简化缩进检查
+                "comma_style": "leading",  # 逗号在行首
+                "indent_unit": "space",  # 缩进用空格
                 "tab_space_size": 4,
                 # 解析器优化 - 增加限制避免长SQL解析失败
                 "ignore": "",  # 不忽略任何语法
@@ -136,8 +136,27 @@ class LintService:
                 "rust_parser_max_iterations": 10000000,  # 增加Rust解析器迭代次数（默认300万）
                 "large_file_skip_byte_limit": 100000,  # 增加大文件跳过限制（默认20000）
                 "runaway_limit": 50,  # 增加失控限制（默认10）
+                # JOIN/ON 缩进（根级生效）
+                "indented_joins": "True",
+                "indented_using_on": "True",
+                "indented_on_contents": "True",
             }
         )
+        # overrides 不支持 layout/indentation 子节，直接注入 _configs
+        layout_types = config._configs.setdefault("layout", {}).setdefault("type", {})
+        for clause in ("select_clause", "from_clause", "where_clause",
+                       "join_clause", "groupby_clause", "orderby_clause",
+                       "having_clause", "limit_clause"):
+            layout_types.setdefault(clause, {})["line_position"] = "alone:strict"
+        for clause in ("where_clause", "having_clause", "groupby_clause", "orderby_clause"):
+            layout_types.setdefault(clause, {})["keyword_line_position"] = "leading"
+        layout_types.setdefault("comma", {})["line_position"] = "leading"
+        # indentation 子节
+        indent_cfg = config._configs.setdefault("indentation", {})
+        indent_cfg["indented_joins"] = True
+        indent_cfg["indented_using_on"] = True
+        indent_cfg["indented_on_contents"] = True
+        return config
     
     def _should_sample(self, sql_size_kb: float) -> bool:
         """
@@ -390,26 +409,59 @@ class LintService:
             result = self.linter.lint_string(sql)
             return self._format_result(result)
     
-    def fix_sql(self, sql: str) -> str:
+    @staticmethod
+    def _restore_variables(sql: str) -> str:
+        """将占位符 _v_name_ 还原为 ${name}"""
+        import re
+        return re.sub(r'_v_([a-zA-Z_][a-zA-Z0-9_]*)_', r'${\1}', sql)
+
+    @staticmethod
+    def _split_statements(sql: str) -> list:
+        """按分号拆分为独立的SQL语句，过滤空串"""
+        stmts = [s.strip() for s in sql.split(';')]
+        return [s for s in stmts if s]
+
+    def fix_sql(self, sql: str) -> list:
         """
         自动修正SQL中的问题（如标识符大小写）
-        
+
+        流程：预处理(变量→占位符) → 拆句 → 逐条SQLFluff fix → 占位符→变量还原
+
         Args:
-            sql: 原始SQL
-            
+            sql: 原始SQL（可含分号分隔的多条语句）
+
         Returns:
-            修正后的SQL，超时时返回原SQL
+            [{"fixed": str}, {"fixed": str}, ...]
+            每条语句对应一个结果，SET等配置语句已被预处理器过滤
         """
+        # 记录修复开始日志（原始SQL）
+        logger.info(f"[SQL修复开始] SQL摘要: {self._get_sql_summary(sql)}")
+        
         processed_sql = self.preprocessor_manager.process(sql)
-        try:
-            result = self._run_with_timeout(self._fix_sql_internal, processed_sql)
-            return result.tree.raw if result and result.tree else sql
-        except FutureTimeoutError:
-            logger.warning(f"[SQL修复超时] ({self.timeout_seconds}秒)，返回原SQL")
-            return sql
-        except Exception as e:
-            logger.error(f"[SQL修复失败] {e}")
-            return sql
+        statements = self._split_statements(processed_sql)
+        results = []
+        for i, stmt in enumerate(statements):
+            # 记录修复前的语句（含变量占位符已还原的版本）
+            stmt_before = self._restore_variables(stmt)
+            stmt_summary = self._get_sql_summary(stmt_before)
+            logger.info(f"[SQL修复语句 {i+1}/{len(statements)}] 修正前: {stmt_summary}")
+            
+            try:
+                result = self._run_with_timeout(self._fix_sql_internal, stmt)
+                raw = result.tree.raw if result and result.tree else stmt
+                fixed = self._restore_variables(raw)
+                logger.info(f"[SQL修复语句 {i+1}/{len(statements)}] 修正后: {self._get_sql_summary(fixed)}")
+            except FutureTimeoutError:
+                logger.warning(f"[SQL修复超时] 语句{i+1} ({self.timeout_seconds}秒)，返回原SQL")
+                fixed = self._restore_variables(stmt)
+                logger.info(f"[SQL修复语句 {i+1}/{len(statements)}] 超时，返回原SQL")
+            except Exception as e:
+                logger.error(f"[SQL修复失败] 语句{i+1}: {e}")
+                fixed = self._restore_variables(stmt)
+            results.append({"fixed": fixed})
+        
+        logger.info(f"[SQL修复完成] 共处理 {len(results)} 条语句")
+        return results
 
     def _fix_sql_internal(self, sql: str):
         """内部fix方法（不带超时控制）"""
