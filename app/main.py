@@ -3,12 +3,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 import uvicorn
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.services.lint_service import LintService
 import logging
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 # 从环境变量获取日志配置
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -52,7 +53,6 @@ logging.getLogger("watchdog").setLevel(logging.INFO)     # 设置watchdog日志�
 logger = logging.getLogger(__name__)
 
 # 全局服务实例
-from typing import Optional
 lint_service: Optional[LintService] = None
 
 # 从环境变量获取是否启用热加载，默认启用
@@ -101,11 +101,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 class SQLRequest(BaseModel):
-    sql: str  # 请求体：SQL语句
-
-class RuleFile(BaseModel):
-    filename: str
-    content: str
+    sql: str = Field(max_length=10_485_760)  # 请求体：SQL语句，上限10MB
 
 @app.post("/lint")
 async def lint_sql(request: SQLRequest):
@@ -117,7 +113,8 @@ async def lint_sql(request: SQLRequest):
         result = lint_service.lint_sql(request.sql)
         return {"status": "success", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"SQL lint检查失败: {e}")
+        raise HTTPException(status_code=500, detail="SQL lint检查失败")
 
 @app.post("/fix")
 async def fix_sql(request: SQLRequest):
@@ -129,7 +126,8 @@ async def fix_sql(request: SQLRequest):
         fixed_sql = lint_service.fix_sql(request.sql)
         return {"status": "success", "fixed_sql": fixed_sql}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"SQL自动修复失败: {e}")
+        raise HTTPException(status_code=500, detail="SQL自动修复失败")
 
 @app.get("/rules")
 async def get_rules():
@@ -141,7 +139,8 @@ async def get_rules():
         rules = lint_service.get_loaded_rules()
         return {"status": "success", "rules": rules, "hot_reload_enabled": ENABLE_HOT_RELOAD}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"获取规则列表失败: {e}")
+        raise HTTPException(status_code=500, detail="获取规则列表失败")
 
 @app.get("/preprocessors")
 async def get_preprocessors():
@@ -153,7 +152,8 @@ async def get_preprocessors():
         preprocessors = lint_service.get_loaded_preprocessors()
         return {"status": "success", "preprocessors": preprocessors}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"获取预处理器信息失败: {e}")
+        raise HTTPException(status_code=500, detail="获取预处理器信息失败")
 
 @app.post("/rules/reload")
 async def reload_rules():
@@ -168,7 +168,8 @@ async def reload_rules():
         else:
             raise HTTPException(status_code=500, detail="规则重新加载失败")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"规则重新加载失败: {e}")
+        raise HTTPException(status_code=500, detail="规则重新加载失败")
 
 @app.get("/health")
 async def health_check():
@@ -194,7 +195,8 @@ async def health_check():
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"服务异常: {str(e)}")
+        logger.error(f"健康检查失败: {e}")
+        raise HTTPException(status_code=503, detail="服务异常")
 
 @app.get("/monitor/status")
 async def monitor_status():
@@ -212,7 +214,8 @@ async def monitor_status():
         
         return {"status": "success", "monitor": status}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"获取监控状态失败: {e}")
+        raise HTTPException(status_code=500, detail="获取监控状态失败")
 
 
 if __name__ == "__main__":
