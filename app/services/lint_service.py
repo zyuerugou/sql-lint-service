@@ -7,12 +7,10 @@
 import importlib
 import logging
 import os
-import re
 import threading
-import time
-from pathlib import Path
-from typing import Optional, List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from pathlib import Path
+from typing import List, Dict, Any
 
 from sqlfluff.core import Linter
 from sqlfluff.core.config import FluffConfig
@@ -377,6 +375,20 @@ class LintService:
         with self.reload_lock:
             result = self.linter.lint_string(sql)
             return self._format_result(result)
+    
+    def fix_sql(self, sql: str) -> str:
+        """
+        自动修正SQL中的问题（如标识符大小写）
+        
+        Args:
+            sql: 原始SQL
+            
+        Returns:
+            修正后的SQL
+        """
+        with self.reload_lock:
+            result = self.linter.lint_string(sql, fix=True)
+            return result.tree.raw
     
     def lint_sql(self, sql: str) -> List[Dict[str, Any]]:
         """

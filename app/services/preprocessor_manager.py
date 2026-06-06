@@ -1,13 +1,13 @@
+# coding=utf-8
 """
 预处理器管理器
 管理所有SQL预处理器，按顺序执行预处理，支持热部署
 """
 
-import os
 import importlib
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from app.rules.preprocessors.base_preprocessor import BasePreprocessor
 

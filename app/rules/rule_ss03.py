@@ -1,6 +1,7 @@
 # coding=utf-8
 from sqlfluff.core.rules import BaseRule, RuleContext, LintResult
 from sqlfluff.core.rules.crawlers import SegmentSeekerCrawler
+from sqlfluff.core.rules.fix import LintFix
 
 
 class Rule_SS03(BaseRule):
@@ -11,6 +12,7 @@ class Rule_SS03(BaseRule):
     description = "除了关键字、双引号、引号内的内容以外，表名和字段名应当为小写。"
     crawl_behaviour = SegmentSeekerCrawler({"identifier", "naked_identifier", "quoted_identifier"})
     config_keywords = []
+    is_fix_compatible = True
     
     def _eval(self, context: RuleContext):
         # 获取当前segment
@@ -46,6 +48,17 @@ class Rule_SS03(BaseRule):
                 return LintResult(
                     anchor=segment,
                     description=f"标识符应当为小写: {identifier_name}",
+                    fixes=[
+                        LintFix.replace(
+                            anchor_segment=segment,
+                            edit_segments=[
+                                segment.__class__(
+                                    raw=identifier_name.lower(),
+                                    pos_marker=segment.pos_marker,
+                                )
+                            ],
+                        )
+                    ],
                 )
         
         return None

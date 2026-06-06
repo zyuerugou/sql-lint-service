@@ -119,6 +119,18 @@ async def lint_sql(request: SQLRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/fix")
+async def fix_sql(request: SQLRequest):
+    """提交SQL并返回自动修正后的SQL"""
+    if lint_service is None:
+        raise HTTPException(status_code=503, detail="服务未初始化")
+
+    try:
+        fixed_sql = lint_service.fix_sql(request.sql)
+        return {"status": "success", "fixed_sql": fixed_sql}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/rules")
 async def get_rules():
     """获取当前加载的规则列表"""

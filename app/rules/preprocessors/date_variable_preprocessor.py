@@ -4,9 +4,8 @@
 根据batch_date参数替换SQL中的日期变量，参照references/dateutils.py中的get_useful_date方法
 """
 
-import re
 import logging
-import datetime
+import re
 from typing import Dict, Any, Optional
 
 from .base_preprocessor import BasePreprocessor
