@@ -107,7 +107,7 @@ class LintService:
         
         # 5. 如果启用热加载，启动监控
         if self.enable_hot_reload:
-            self._start_file_monitor()
+            self._start_watchdog_monitor()
         
         logger.info(f"LintService初始化完成，超时时间: {timeout_seconds}秒，最大SQL大小: {max_sql_size_mb}MB")
     
@@ -250,6 +250,26 @@ class LintService:
             return False
         return True
     
+    def _run_with_timeout(self, func, *args, **kwargs):
+        """
+        在线程池中执行函数，带超时控制
+
+        Args:
+            func: 要执行的函数
+
+        Returns:
+            func 的返回值
+
+        Raises:
+            FutureTimeoutError: 超时
+        """
+        future = self.executor.submit(func, *args, **kwargs)
+        try:
+            return future.result(timeout=self.timeout_seconds)
+        except FutureTimeoutError:
+            future.cancel()
+            raise
+
     def lint_sql_with_timeout(self, sql: str) -> List[Dict[str, Any]]:
         """
         带超时的SQL lint检查
@@ -309,40 +329,10 @@ class LintService:
             logger.info(f"[SQL采样] 采样后摘要: {sampled_summary}")
         
         # 使用线程池执行带超时的lint检查
-        future = self.executor.submit(self._lint_sql_internal, processed_sql)
-        
         try:
-            result = future.result(timeout=self.timeout_seconds)
-            
-            # 记录检查结果日志
-            if result:
-                error_count = len([r for r in result if r.get("severity") == "error"])
-                warning_count = len([r for r in result if r.get("severity") == "warning"])
-                logger.info(f"[SQL检查完成] 共发现{len(result)}个问题 (错误: {error_count}, 警告: {warning_count})")
-                
-                # 记录前5个问题（避免日志过大）
-                for i, violation in enumerate(result[:5], 1):
-                    logger.info(f"[问题{i}] {violation.get('rule_id')}: {violation.get('message')} (行{violation.get('line')})")
-                
-                if len(result) > 5:
-                    logger.info(f"[更多问题] 还有{len(result)-5}个问题未显示")
-            else:
-                logger.info(f"[SQL检查完成] 未发现问题")
-            
-            # 缓存结果
-            with self.cache_lock:
-                if len(self.cache) >= self.cache_size:
-                    # 移除最旧的缓存项
-                    oldest_key = next(iter(self.cache))
-                    del self.cache[oldest_key]
-                self.cache[cache_key] = result
-            
-            return result
-            
+            result = self._run_with_timeout(self._lint_sql_internal, processed_sql)
         except FutureTimeoutError:
             logger.warning(f"[SQL检查超时] SQL lint检查超时 ({self.timeout_seconds}秒)")
-            future.cancel()  # 取消任务
-            
             return [{
                 "rule_id": "TIMEOUT",
                 "message": f"SQL lint检查超时 ({self.timeout_seconds}秒)，SQL大小: {len(sql)/1024:.1f}KB",
@@ -350,7 +340,6 @@ class LintService:
                 "line": 1,
                 "column": 1
             }]
-            
         except Exception as e:
             logger.error(f"[SQL检查失败] 错误类型: {type(e).__name__}, 错误信息: {str(e)}")
             logger.error(f"[SQL检查失败] 失败SQL摘要: {self._get_sql_summary(sql)}")
@@ -361,6 +350,31 @@ class LintService:
                 "line": 1,
                 "column": 1
             }]
+        
+        # 记录检查结果日志
+        if result:
+            error_count = len([r for r in result if r.get("severity") == "error"])
+            warning_count = len([r for r in result if r.get("severity") == "warning"])
+            logger.info(f"[SQL检查完成] 共发现{len(result)}个问题 (错误: {error_count}, 警告: {warning_count})")
+            
+            # 记录前5个问题（避免日志过大）
+            for i, violation in enumerate(result[:5], 1):
+                logger.info(f"[问题{i}] {violation.get('rule_id')}: {violation.get('message')} (行{violation.get('line')})")
+            
+            if len(result) > 5:
+                logger.info(f"[更多问题] 还有{len(result)-5}个问题未显示")
+        else:
+            logger.info(f"[SQL检查完成] 未发现问题")
+        
+        # 缓存结果
+        with self.cache_lock:
+            if len(self.cache) >= self.cache_size:
+                # 移除最旧的缓存项
+                oldest_key = next(iter(self.cache))
+                del self.cache[oldest_key]
+            self.cache[cache_key] = result
+        
+        return result
     
     def _lint_sql_internal(self, sql: str) -> List[Dict[str, Any]]:
         """
@@ -384,11 +398,23 @@ class LintService:
             sql: 原始SQL
             
         Returns:
-            修正后的SQL
+            修正后的SQL，超时时返回原SQL
         """
+        processed_sql = self.preprocessor_manager.process(sql)
+        try:
+            result = self._run_with_timeout(self._fix_sql_internal, processed_sql)
+            return result.tree.raw if result and result.tree else sql
+        except FutureTimeoutError:
+            logger.warning(f"[SQL修复超时] ({self.timeout_seconds}秒)，返回原SQL")
+            return sql
+        except Exception as e:
+            logger.error(f"[SQL修复失败] {e}")
+            return sql
+
+    def _fix_sql_internal(self, sql: str):
+        """内部fix方法（不带超时控制）"""
         with self.reload_lock:
-            result = self.linter.lint_string(sql, fix=True)
-            return result.tree.raw
+            return self.linter.lint_string(sql, fix=True)
     
     def lint_sql(self, sql: str) -> List[Dict[str, Any]]:
         """
@@ -446,6 +472,7 @@ class LintService:
     
     def load_rules_from_files(self):
         """扫描规则目录，动态加载所有规则文件"""
+        from sqlfluff.core.rules import BaseRule
         rules_list = []
         
         for filename in os.listdir(self.rules_dir):
@@ -455,8 +482,16 @@ class LintService:
                 
                 try:
                     module = importlib.import_module(module_path)
-                    rule_class_name = f"Rule_{module_name.split('_')[1].upper()}"
-                    rule_class = getattr(module, rule_class_name)
+                    # 扫描模块中所有BaseRule子类，替代文件名拼凑类名
+                    rule_class = None
+                    for attr_name in dir(module):
+                        attr = getattr(module, attr_name)
+                        if isinstance(attr, type) and issubclass(attr, BaseRule) and attr is not BaseRule:
+                            rule_class = attr
+                            break
+                    if rule_class is None:
+                        logger.error(f"在 {filename} 中未找到 BaseRule 子类")
+                        continue
                     rules_list.append(rule_class)
                     logger.info(f"规则加载成功: {rule_class.code}")
                 except (ImportError, AttributeError) as e:
@@ -513,15 +548,13 @@ class LintService:
         return self.reload_rules()
     
     def stop_monitor(self):
-        """停止文件监控"""
+        """停止文件监控并关闭线程池"""
         if self.file_monitor:
             self.file_monitor.stop()
             self.file_monitor.join()
             logger.info("watchdog文件监控已停止")
-    
-    def _start_file_monitor(self):
-        """启动文件监控"""
-        self._start_watchdog_monitor()
+        self.executor.shutdown(wait=False)
+        logger.info("线程池已关闭")
     
     def _start_watchdog_monitor(self):
         """使用watchdog启动文件监控（支持多个目录）"""
@@ -557,21 +590,20 @@ class LintService:
             logger.error(f"启动watchdog监控失败: {e}")
             raise
     
-    @staticmethod
-    def _format_result(result):
+    def _format_result(self, result):
         """将SQLFluff结果格式化为标准JSON"""
+        allowed_codes = {r.code for r in self.custom_rules}
         formatted = []
         try:
             # 确保violations是可迭代的
             violations = result.violations
             if hasattr(violations, '__iter__'):
                 for violation in violations:
-                    # 过滤掉PRS错误和系统规则（只保留SS01、SS02、SS03）
+                    # 过滤掉PRS错误和系统规则（只保留自定义规则）
                     rule_code = violation.rule_code()
                     if rule_code == "PRS":
                         continue
-                    # 只保留自定义规则
-                    if rule_code not in ["SS01", "SS02", "SS03"]:
+                    if rule_code not in allowed_codes:
                         continue
                     formatted.append({
                         "rule_id": rule_code,
@@ -589,12 +621,10 @@ class LintService:
                 # 如果是生成器，尝试转换为列表
                 violations_list = list(result.violations)
                 for violation in violations_list:
-                    # 过滤掉PRS错误和系统规则（只保留SS01、SS02、SS03）
                     rule_code = violation.rule_code()
                     if rule_code == "PRS":
                         continue
-                    # 只保留自定义规则
-                    if rule_code not in ["SS01", "SS02", "SS03"]:
+                    if rule_code not in allowed_codes:
                         continue
                     formatted.append({
                         "rule_id": rule_code,
@@ -621,7 +651,6 @@ class LintService:
         """析构函数，确保监控线程被正确停止"""
         try:
             self.stop_monitor()
-            self.executor.shutdown(wait=False)
         except:
             pass
     

@@ -124,13 +124,5 @@ class MultiDirectoryEventHandler(FileSystemEventHandler):
             logger.error(f"{dir_type}重新加载失败: {e}")
 
 
-# 向后兼容：保留旧的RuleFileEventHandler
-class RuleFileEventHandler(MultiDirectoryEventHandler):
-    """规则文件事件处理器（向后兼容）"""
-    
-    def __init__(self, service, debounce_seconds: float = 0.5):
-        # 只监控规则目录
-        directories = {"rules": service.rules_dir}
-        super().__init__(service, directories, debounce_seconds)
 
 
