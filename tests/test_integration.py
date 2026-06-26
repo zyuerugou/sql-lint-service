@@ -6,9 +6,8 @@ import requests
 
 BASE = "http://localhost:5000"
 
-def test(msg, ok):
-    tag = "✅" if ok else "❌"
-    print(f"  {tag} {msg}")
+def check(msg, ok):
+    print(f"  {'OK' if ok else 'FAIL'} {msg}")
     return ok
 
 def run_all():

@@ -118,10 +118,10 @@ class SetStatementFilterPreprocessor(BasePreprocessor):
     
     def get_info(self) -> Dict[str, Any]:
         """获取预处理器信息"""
-        info = super().get_info()
-        info.update({
+        return {
+            "name": self.__class__.__name__,
             "description": "SET语句过滤器预处理器",
+            "order": self.order,
             "patterns_count": len(self.filter_patterns),
             "abstract_base": False
-        })
-        return info
+        }

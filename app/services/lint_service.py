@@ -4,6 +4,7 @@
 优化的LintService，针对大SQL进行性能优化
 """
 
+import hashlib
 import importlib
 import logging
 import os
@@ -240,17 +241,6 @@ class LintService:
         return f"{length}字符/{lines}行: {preview_start}...{preview_end}"
     
     def _get_cache_key(self, sql: str) -> str:
-        """
-        生成缓存键
-        
-        Args:
-            sql: SQL字符串
-            
-        Returns:
-            缓存键
-        """
-        import hashlib
-        # 使用MD5哈希作为缓存键
         return hashlib.md5(sql.encode('utf-8')).hexdigest()
     
     def _check_sql_size(self, sql: str) -> bool:
@@ -480,48 +470,6 @@ class LintService:
         """
         return self.lint_sql_with_timeout(sql)
     
-    # 以下方法保持与原LintService兼容
-    def _clear_rule_module_cache(self, changed_files=None):
-        """
-        清理发生变动的规则模块缓存
-        
-        Args:
-            changed_files: 发生变动的文件列表（可选）
-        """
-        import sys
-        
-        # 规则模块前缀
-        module_prefix = "app.rules"
-        
-        modules_to_delete = []
-        changed_stems = set()
-        if changed_files is not None:
-            from pathlib import Path
-            changed_stems = {Path(f).stem for f in changed_files}
-        
-        # 收集所有需要清理的模块
-        for module_name in list(sys.modules.keys()):
-            if module_name == module_prefix or module_name.startswith(f"{module_prefix}."):
-                if changed_files is None:
-                    modules_to_delete.append(module_name)
-                else:
-                    # 父包 app.rules 始终清理（子模块变动需要父包刷新）
-                    if module_name == module_prefix:
-                        modules_to_delete.append(module_name)
-                    else:
-                        # 子模块：提取模块名部分（如 rule_ss03）
-                        file_name = module_name[len(module_prefix) + 1:]
-                        if file_name in changed_stems:
-                            modules_to_delete.append(module_name)
-        
-        # 删除模块
-        for module_name in modules_to_delete:
-            try:
-                del sys.modules[module_name]
-                logger.debug(f"已清理规则模块缓存: {module_name}")
-            except Exception as e:
-                logger.warning(f"清理规则模块缓存失败 {module_name}: {e}")
-    
     def load_rules_from_files(self):
         """扫描规则目录，动态加载所有规则文件"""
         from sqlfluff.core.rules import BaseRule
@@ -565,7 +513,7 @@ class LintService:
                 logger.info("开始重新加载规则...")
                 
                 # 清理发生变动的规则模块缓存
-                self._clear_rule_module_cache(changed_files)
+                self.preprocessor_manager._clear_module_cache(changed_files)
                 
                 new_rules = self.load_rules_from_files()
                 self.custom_rules = new_rules
@@ -666,27 +614,6 @@ class LintService:
                     })
             else:
                 logger.warning(f"[_format_result] violations不是可迭代对象: {type(violations)}")
-        except StopIteration:
-            logger.error("[_format_result] 捕获到StopIteration异常，violations可能是一个已耗尽的迭代器")
-            # 尝试重新获取violations
-            try:
-                # 如果是生成器，尝试转换为列表
-                violations_list = list(result.violations)
-                for violation in violations_list:
-                    rule_code = violation.rule_code()
-                    if rule_code == "PRS":
-                        continue
-                    if rule_code not in allowed_codes:
-                        continue
-                    formatted.append({
-                        "rule_id": rule_code,
-                        "message": violation.desc(),
-                        "severity": str(violation.warning),
-                        "line": violation.line_no,
-                        "column": getattr(violation, 'line_pos', 0)
-                    })
-            except Exception as e2:
-                logger.error(f"[_format_result] 重新获取violations失败: {type(e2).__name__}: {e2}")
         except Exception as e:
             logger.error(f"[_format_result] 格式化结果时发生错误: {type(e).__name__}: {e}")
             # 返回错误信息

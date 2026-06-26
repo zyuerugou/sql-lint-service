@@ -9,8 +9,6 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any
 
-from app.rules.preprocessors.base_preprocessor import BasePreprocessor
-
 logger = logging.getLogger(__name__)
 
 
@@ -103,24 +101,17 @@ class PreprocessorManager:
             # 动态导入预处理器
             for py_file in py_files:
                 try:
-                    # 构建模块路径
                     module_name = f"app.rules.preprocessors.{py_file.stem}"
-                    
-                    # 导入模块
                     module = importlib.import_module(module_name)
                     
-                    # 查找预处理器类（继承自BasePreprocessor的类）
+                    from app.rules.preprocessors.base_preprocessor import BasePreprocessor
+                    
                     for attr_name in dir(module):
                         attr = getattr(module, attr_name)
-                        if isinstance(attr, type) and attr_name != 'BasePreprocessor':
-                            # 使用BasePreprocessor验证实现
-                            if BasePreprocessor.validate_implementation(attr):
-                                # 实例化预处理器
-                                preprocessor = attr()
-                                self.preprocessors.append(preprocessor)
-                                logger.info(f"加载预处理器: {attr_name} (order={preprocessor.order})")
-                            elif attr_name.endswith('Preprocessor'):
-                                logger.warning(f"跳过无效预处理器类: {attr_name} (未正确实现BasePreprocessor)")
+                        if isinstance(attr, type) and issubclass(attr, BasePreprocessor) and attr_name != 'BasePreprocessor':
+                            preprocessor = attr()
+                            self.preprocessors.append(preprocessor)
+                            logger.info(f"加载预处理器: {attr_name} (order={preprocessor.order})")
                             
                 except Exception as e:
                     logger.error(f"加载预处理器 {py_file.name} 失败: {e}")

@@ -86,53 +86,9 @@ class DateVariablePreprocessor(BasePreprocessor):
             # 时间戳相关
             "batch_timestamp": "_v_batch_timestamp_",
             "batch_timestamp_with_t": "_v_batch_timestamp_with_t_",
+            "last_month_end_list": "_v_last_month_end_list_",
         }
-        
-        # get_useful_date方法返回的所有变量名
-        self.useful_date_variables = [
-            "batch_timestamp",
-            "batch_timestamp_with_t",
-            "batch_date",
-            "batch_yyyymm",
-            "next_date",
-            "last_date",
-            "max_date",
-            "min_date",
-            "retain_week",
-            "retain_month",
-            "week_start",
-            "week_end",
-            "next_week_start",
-            "next_week_end",
-            "last_week_start",
-            "last_week_end",
-            "month_start",
-            "month_end",
-            "last_month_end_list",
-            "next_month_start",
-            "next_month_end",
-            "last_month_start",
-            "last_month_end",
-            "last_month_yyyymm",
-            "previous_month_start",
-            "previous_month_end",
-            "previous_month_yyyymm",
-            "quarter_start",
-            "quarter_end",
-            "next_quarter_start",
-            "next_quarter_end",
-            "last_quarter_start",
-            "last_quarter_end",
-            "year_start",
-            "year_end",
-            "next_year_start",
-            "next_year_end",
-            "last_year_start",
-            "last_year_end",
-            "last_year_bath_date",
-            "year_before_last_bath_date"
-        ]
-    
+
     def process(self, sql: str, context: Optional[Dict[str, Any]] = None) -> str:
         """
         处理SQL，替换所有变量
@@ -158,16 +114,10 @@ class DateVariablePreprocessor(BasePreprocessor):
             if var_name in date_variables:
                 return date_variables[var_name]
             
-            # 然后检查是否在get_useful_date变量列表中
-            elif var_name in self.useful_date_variables:
-                # 如果在列表中但不在计算结果中，使用默认值
-                if var_name in self.default_variables:
-                    logger.warning(f"日期变量 {var_name} 使用默认值")
-                    return self.default_variables[var_name]
-                else:
-                    # 保留原样
-                    logger.warning(f"未找到日期变量 {var_name} 的默认值")
-                    return match.group(0)
+            # 然后检查是否在已知的日期变量列表中
+            elif var_name in self.default_variables:
+                logger.warning(f"日期变量 {var_name} 使用默认值")
+                return self.default_variables[var_name]
             
             else:
                 # 不是日期变量，使用默认值替换
@@ -181,13 +131,12 @@ class DateVariablePreprocessor(BasePreprocessor):
     
     def get_info(self) -> Dict[str, Any]:
         """获取预处理器信息"""
-        info = super().get_info()
-        info.update({
+        return {
+            "name": self.__class__.__name__,
             "description": "日期变量预处理器（替换为可逆占位符 _v_{name}_）",
+            "order": self.order,
             "requires_batch_date": False,
             "default_batch_date": "_v_batch_date_",
-            "useful_date_variables_count": len(self.useful_date_variables),
             "default_variables_count": len(self.default_variables),
             "abstract_base": False
-        })
-        return info
+        }

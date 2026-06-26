@@ -67,7 +67,8 @@ class Rule_TE01(BaseRule):
         return None
 '''
     
-    new_rule_path = os.path.join("..", "app", "rules", "rule_te01.py")
+    rules_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "app", "rules")
+    new_rule_path = os.path.join(rules_dir, "rule_te01.py")
     with open(new_rule_path, 'w', encoding='utf-8') as f:
         f.write(new_rule_content)
     
@@ -157,7 +158,8 @@ def test_without_hot_reload():
     print(f"加载的规则: {rules}")
     
     # 创建新规则文件
-    new_rule_path = os.path.join("..", "app", "rules", "rule_te03.py")
+    rules_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "app", "rules")
+    new_rule_path = os.path.join(rules_dir, "rule_te03.py")
     with open(new_rule_path, 'w', encoding='utf-8') as f:
         f.write('''# coding=utf-8
 from sqlfluff.core.rules import BaseRule

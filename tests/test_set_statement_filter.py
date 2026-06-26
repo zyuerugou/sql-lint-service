@@ -35,9 +35,9 @@ class TestSetStatementFilterPreprocessor:
     def test_filter_all_set_statements(self, preprocessor):
         """测试过滤所有SET配置语句"""
         sql = """
-        set my.config=value;
+        set hive.exec.dynamic.partition.mode=nonstrict;
         SELECT * FROM table;
-        set another.config = 123;
+        set tez.queue.name=default;
         """
         
         result = preprocessor.process(sql)
@@ -51,7 +51,7 @@ class TestSetStatementFilterPreprocessor:
         """测试不过滤UPDATE语句中的SET子句"""
         sql = """
         UPDATE table SET column1 = 'value' WHERE id = 1;
-        set config.value = 123;
+        set hive.exec.dynamic.partition.mode=nonstrict;
         UPDATE another SET col = 'test' WHERE condition;
         """
         

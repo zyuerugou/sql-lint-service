@@ -37,10 +37,11 @@ class TestPreprocessorIntegration:
         """测试获取预处理器信息"""
         preprocessors_info = lint_service.get_loaded_preprocessors()
         
-        assert len(preprocessors_info) == 2
+        assert len(preprocessors_info) == 3
         
         # 检查预处理器信息
         names = [info["name"] for info in preprocessors_info]
+        assert "CommentFilterPreprocessor" in names
         assert "SetStatementFilterPreprocessor" in names
         assert "DateVariablePreprocessor" in names
     
